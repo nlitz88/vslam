@@ -5,6 +5,9 @@ from sensor_msgs.msg import Image
 
 from message_filters import Subscriber, TimeSynchronizer
 
+import cv2
+from cv_bridge import CvBridge
+
 
 # import cv_bridge
 
@@ -12,12 +15,6 @@ class VoNode(Node):
 
     def __init__(self):
         super().__init__('vo_node')
-        # self.subscription = self.create_subscription(
-        #     String,
-        #     'topic',
-        #     self.listener_callback,
-        #     10)
-        # self.subscription  # prevent unused variable warning
 
         # self._left_image_sub = self.create_subscription(Image,
         #                                                 "/camera/infra1/image_rect_raw",
@@ -29,31 +26,68 @@ class VoNode(Node):
         #                                                  self.depth_image_callback,
         #                                                  10)
 
+        # Create publisher for keypoint image.
+        self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
+
+        # Create subscribers for left infrared camera and corresponding depth
+        # image.
         self._left_image_sub = Subscriber(self, Image, "/camera/infra1/image_rect_raw")
         self._depth_image_sub = Subscriber(self, Image, "/camera/depth/image_rect_raw")
 
+        # Using "message_filters" time sync feature to trigger a single callback
+        # when both image messages with the same timestamp are received.
         queue_size = 10
         self.sync = TimeSynchronizer([self._left_image_sub, self._depth_image_sub], queue_size)
         self.sync.registerCallback(self.infra_depth_sync_callback)
 
+        # Create cv_bridge instance.
+        # Reference: https://automaticaddison.com/getting-started-with-opencv-in-ros-2-foxy-fitzroy-python/
+        self.br = CvBridge()
 
-    def listener_callback(self, msg):
-        self.get_logger().info('I heard: "%s"' % msg.data)
-
-    def left_image_callback(self, left_image: Image):
-        self.get_logger().debug(f"Received new left image with timestamp: {left_image.header.stamp}")
-
-    def depth_image_callback(self, depth_image: Image):
-        self.get_logger().debug(f"Received new depth image with timestamp: {depth_image.header.stamp}")
+        # Initiate ORB detector
+        self.orb = cv2.ORB_create()
 
 
-    def infra_depth_sync_callback(self, left_image: Image, depth_image: Image):
+    # def left_image_callback(self, left_image: Image):
+    #     self.get_logger().debug(f"Received new left image with timestamp: {left_image.header.stamp}")
+
+    # def depth_image_callback(self, depth_image: Image):
+    #     self.get_logger().debug(f"Received new depth image with timestamp: {depth_image.header.stamp}")
+
+
+    def infra_depth_sync_callback(self, left_image_msg: Image, depth_image_msg: Image):
         self.get_logger().debug(f"Received new left infra image and depth image pair with matching timestamps: \
-                                infra timestamp: {left_image.header.stamp} \
-                                depth timestamp: {depth_image.header.stamp}")
+                                infra timestamp: {left_image_msg.header.stamp} \
+                                depth timestamp: {depth_image_msg.header.stamp}")
         
 
         # OKAY--this is where we can start the visual odometry pipeline.
+
+        # 1. Convert each image into opencv compatible images with cv_bridge.
+        left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg)
+        depth_image = self.br.imgmsg_to_cv2(img_msg=depth_image_msg)
+
+        # 2. Extract ORB features from the left image. Starting from
+        #    https://docs.opencv.org/4.x/d1/d89/tutorial_py_orb.html
+        #    This step will detect interesting keypoints that we will then
+        #    generate ORB descriptors from.
+        keypoints = self.orb.detect(left_image)
+        # compute the descriptors with ORB
+        keypoints, descriptors = self.orb.compute(left_image, keypoints)
+
+        # DEBUG: Draw keypoints on image and publish.
+        # draw only keypoints location,not size and orientation
+        left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
+        # Convert the debug image to a ROS image so we can publish it.
+        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
+                                                         encoding="rgb8")
+        self._keypoint_image_pub.publish(left_image_keypoints_msg)
+
+        # 3. Triangulate 3D position of each feature using stereo depth.
+
+
+        # If this is the first image,depth pair we're receiving, no
+        # transformation to estimate, bail out.
 
         pass
 
