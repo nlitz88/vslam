@@ -31,16 +31,6 @@ class VoNode(Node):
     def __init__(self):
         super().__init__('vo_node')
 
-        # self._left_image_sub = self.create_subscription(Image,
-        #                                                 "/camera/infra1/image_rect_raw",
-        #                                                 self.left_image_callback,
-        #                                                 10)
-        
-        # self._depth_image_sub = self.create_subscription(Image,
-        #                                                  "/camera/depth/image_rect_raw",
-        #                                                  self.depth_image_callback,
-        #                                                  10)
-
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
 
@@ -72,6 +62,12 @@ class VoNode(Node):
         # Create feature matcher.
         # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+
+        # Store previous frame's images, features, and feature positions.
+        self._last_left_frame = None
+        self._last_keypoints = None
+        self._last_descriptors = None
+        self._last_positions = None
 
 
     # def left_image_callback(self, left_image: Image):
@@ -111,7 +107,7 @@ class VoNode(Node):
         keypoints, descriptors = self.orb.compute(left_image, keypoints)
 
         # print(f"Shape of keypoints: {keypoints}")
-        print(f"Shape of descriptors: {descriptors.shape}")
+        # print(f"Shape of descriptors: {descriptors.shape}")
 
         # DEBUG: Draw keypoints on image and publish.
         # draw only keypoints location,not size and orientation
@@ -129,7 +125,6 @@ class VoNode(Node):
         #    the focal length terms may also contain scale information.
         keypoint_2d_positions = []
         keypoint_3d_positions = []
-        print(f"First keypoint pos: {keypoints[0].pt}")
         for k, keypoint in enumerate(keypoints):
 
             
@@ -142,7 +137,7 @@ class VoNode(Node):
             # Get depth from depth map at the keypoint position.
             Z = depth_image[py, px]
             # keypoint_positions.append(Z)
-            print(f"Depth of keypoint {k} == {Z}")
+            # print(f"Depth of keypoint {k} == {Z}")
             
             # Grab necessary camera intrinsic values from the "K" matrix.
             cx = self._left_camera_model.cx()
@@ -158,7 +153,7 @@ class VoNode(Node):
         
         # Convert the position arrays into a numpy array.
         keypoint_2d_positions = np.array(keypoint_2d_positions)
-        keypoint_3d_positions = np.array(keypoint_3d_positions) / 1000
+        keypoint_3d_positions = np.array(keypoint_3d_positions) / 1000 # Convert to meters??
 
 
         # points = zip(keypoints, keypoint_positions)
@@ -167,22 +162,34 @@ class VoNode(Node):
         left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
                                                          encoding="passthrough")
         self._keypoint_image_pub.publish(left_image_keypoints_msg)
-        #     x = (uv[0] - self.cx()) / self.fx()
-        # y = (uv[1] - self.cy()) / self.fy()
-
-
-            # Also need to divide by focal length.
-            # AND THEN, once we have "image plane" coordinates, can multiply by
-            # depth.
-            # NEED TO KNOW if depth being provided in mm or meters--units of the
-            # image plane coordinates will have to match.
+        
 
 
 
-        # If this is the first image,depth pair we're receiving, no
-        # transformation to estimate, bail out.
+        # If this is the first set of images we're receiving, then there is no
+        # transformation we can estimate--bail out. Before doing that, 
+        if self._last_left_frame is None:
+            self._last_left_frame = left_image
+            self._last_keypoints = keypoints
+            self._last_descriptors = descriptors
+            self._last_positions = keypoint_3d_positions
+            return
+        
+        # OTHERWISE, do feature matching between the last image's features and
+        # this images features.
+        # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
+        matches = self.matcher.match(descriptors, self._last_descriptors)
+        # Sort them in the order of their distance.
+        matches = sorted(matches, key = lambda x:x.distance)
 
-        pass
+        # For the matches we find, our goal is to use 3D-2D correspondences and
+        # use PNP to recover what the camera's R|t must have been based on where
+        # the 3D points are in the previous timestep camera's frame and where we
+        # are observing their projections in our current timestep camera image
+        # plane.
+
+
+
 
     # https://answers.ros.org/question/393979/projecting-3d-points-into-pixel-using-image_geometrypinholecameramodel/
     def left_camera_info_callback(self, left_camera_info_msg):
