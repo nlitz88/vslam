@@ -33,6 +33,7 @@ class VoNode(Node):
 
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
+        self._matched_points_image_pub = self.create_publisher(Image, "/matches", 10)
 
         # Create subscriber for CameraInfo messages.
         self._need_info = True
@@ -180,8 +181,19 @@ class VoNode(Node):
         # this images features.
         # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
         matches = self.matcher.match(descriptors, self._last_descriptors)
+        # print(f"Number of matches: {len(matches)}")
         # Sort them in the order of their distance.
         matches = sorted(matches, key = lambda x:x.distance)
+
+        # TEMP: Draw matches
+        # Draw first 10 matches.
+        matches_image = cv2.drawMatches(left_image,
+                               keypoints,
+                               self._last_left_frame,
+                               self._last_keypoints,
+                               matches[:10],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
+        self._matched_points_image_pub.publish(matches_image_msg)
 
         # For the matches we find, our goal is to use 3D-2D correspondences and
         # use PNP to recover what the camera's R|t must have been based on where
