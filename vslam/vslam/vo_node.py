@@ -1,12 +1,13 @@
 import rclpy
 from rclpy.node import Node
 
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import Image, CameraInfo
 
 from message_filters import Subscriber, TimeSynchronizer
 
 import cv2
 from cv_bridge import CvBridge
+from image_geometry import PinholeCameraModel
 
 
 # import cv_bridge
@@ -29,6 +30,14 @@ class VoNode(Node):
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
 
+        # Create subscriber for CameraInfo messages.
+        self._need_info = True
+        self._left_camera_model = PinholeCameraModel()
+        self._left_cam_info = self.create_subscription(msg_type=CameraInfo,
+                                                  topic="/camera/infra1/camera_info",
+                                                  callback=self.left_camera_info_callback,
+                                                  qos_profile=10)
+
         # Create subscribers for left infrared camera and corresponding depth
         # image.
         self._left_image_sub = Subscriber(self, Image, "/camera/infra1/image_rect_raw")
@@ -46,6 +55,9 @@ class VoNode(Node):
 
         # Initiate ORB detector
         self.orb = cv2.ORB_create()
+        # Create feature matcher.
+        # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
 
     # def left_image_callback(self, left_image: Image):
@@ -56,12 +68,21 @@ class VoNode(Node):
 
 
     def infra_depth_sync_callback(self, left_image_msg: Image, depth_image_msg: Image):
+
+        # If we haven't yet received camera parameters, bail out.
+        if self._need_info:
+            self.get_logger().warn("Received left and depth image, but haven't received camera parameters yet on camera info topic.")
+            return
+
         self.get_logger().debug(f"Received new left infra image and depth image pair with matching timestamps: \
                                 infra timestamp: {left_image_msg.header.stamp} \
                                 depth timestamp: {depth_image_msg.header.stamp}")
         
 
         # OKAY--this is where we can start the visual odometry pipeline.
+        # FOR NOW, going to start with the 3D-2D APPROACH, as according to
+        # Davide's tutorial, will drift more slowly than the naive 3D-3D
+        # approach I initially had in mind.
 
         # 1. Convert each image into opencv compatible images with cv_bridge.
         left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg)
@@ -75,6 +96,9 @@ class VoNode(Node):
         # compute the descriptors with ORB
         keypoints, descriptors = self.orb.compute(left_image, keypoints)
 
+        # print(f"Shape of keypoints: {keypoints}")
+        print(f"Shape of descriptors: {descriptors.shape}")
+
         # DEBUG: Draw keypoints on image and publish.
         # draw only keypoints location,not size and orientation
         left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
@@ -84,12 +108,59 @@ class VoNode(Node):
         self._keypoint_image_pub.publish(left_image_keypoints_msg)
 
         # 3. Triangulate 3D position of each feature using stereo depth.
+        #    I forgot; before we can do this, have to convert from 2D pixel
+        #    coordinates to 2D image plane coordinates in millimeters. I think I
+        #    need the camera's intrinsics to do this. I.e., the image plane
+        #    offset and the pixel-size scale or something like that. I believe
+        #    the focal length terms may also contain scale information.
+        keypoint_positions = []
+        print(f"First keypoint pos: {keypoints[0].pt}")
+        for k, keypoint in enumerate(keypoints):
+
+            
+            # First, need to know what each of these keypoints looks like.
+            # https://docs.opencv.org/4.x/d2/d29/classcv_1_1KeyPoint.html
+            px = int(keypoint.pt[0])
+            py = int(keypoint.pt[1])
+
+            # Get depth from depth map at the keypoint position.
+            Z = depth_image[py, px]
+            print(f"Depth of keypoint {k} == {Z}")
+            
+            # Grab necessary camera intrinsic values from the "K" matrix.
+            cx = self._left_camera_model.cx()
+            cy = self._left_camera_model.cy()
+            fx = self._left_camera_model.fx()
+            fy = self._left_camera_model.fy()
+
+            
+
+            # X = (px - self.)
+
+        #     x = (uv[0] - self.cx()) / self.fx()
+        # y = (uv[1] - self.cy()) / self.fy()
+
+
+            # Also need to divide by focal length.
+            # AND THEN, once we have "image plane" coordinates, can multiply by
+            # depth.
+            # NEED TO KNOW if depth being provided in mm or meters--units of the
+            # image plane coordinates will have to match.
+
 
 
         # If this is the first image,depth pair we're receiving, no
         # transformation to estimate, bail out.
 
         pass
+
+    # https://answers.ros.org/question/393979/projecting-3d-points-into-pixel-using-image_geometrypinholecameramodel/
+    def left_camera_info_callback(self, left_camera_info_msg):
+
+        if self._need_info:
+            self.get_logger().info("Ingesting new camera info message!")
+            self._left_camera_model.fromCameraInfo(left_camera_info_msg)
+            self._need_info = False
 
 
     # What I roughly need to do for monocular VO:
@@ -187,6 +258,15 @@ class VoNode(Node):
     # Some of the parameters are named differently!
     # ros2 launch realsense2_camera rs_launch.py enable_sync:=true
     # depth_module.profile:=848x480x60 enable_infra1:=true enable_color:=false
+
+    # ros2 launch realsense2_camera rs_launch.py enable_sync:=true
+    # depth_module.profile:=848x480x30 enable_infra1:=true enable_color:=false
+    # depth_module.emitter_enabled:=false
+
+    # NOTE: For some reason, disabling the emitter at launch time isn't working,
+    # so have to set the parameter later:
+    # https://nvidia-isaac-ros.github.io/troubleshooting/hardware_setup.html#intel-realsense-camera-accidentally-enables-laser-emitter
+    # ros2 param set /camera/camera depth_module.emitter_enabled 0
     
 
 def main(args=None):
