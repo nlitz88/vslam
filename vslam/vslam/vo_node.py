@@ -107,15 +107,12 @@ class VoNode(Node):
         # compute the descriptors with ORB
         keypoints, descriptors = self.orb.compute(left_image, keypoints)
 
-        # print(f"Shape of keypoints: {keypoints}")
-        # print(f"Shape of descriptors: {descriptors.shape}")
-
         # DEBUG: Draw keypoints on image and publish.
         # draw only keypoints location,not size and orientation
         # left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
         # Convert the debug image to a ROS image so we can publish it.
-        # left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
-        #                                                  encoding="rgb8")
+        # left_image_keypoi                                                  nts_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
+        #encoding="rgb8")
         # self._keypoint_image_pub.publish(left_image_keypoints_msg)
 
         # 3. Triangulate 3D position of each feature using stereo depth.
@@ -159,10 +156,12 @@ class VoNode(Node):
 
         # points = zip(keypoints, keypoint_positions)
 
+        # Publish keypoints with their respective 3D positions in the left
+        # camera's frame. Note that this frame likely follows a different
+        # convention from the ROS convention. Have to use a TF to get it into
+        # the camera_link frame if we want that instead. TODO for later.
         left_image_with_keypoints = draw_keypoints_with_text(left_image, keypoints[:30], keypoint_3d_positions[:30])
-
-        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
-                                                         encoding="rgb8")
+        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
         self._keypoint_image_pub.publish(left_image_keypoints_msg)
         
 
@@ -304,6 +303,10 @@ class VoNode(Node):
     # so have to set the parameter later:
     # https://nvidia-isaac-ros.github.io/troubleshooting/hardware_setup.html#intel-realsense-camera-accidentally-enables-laser-emitter
     # ros2 param set /camera/camera depth_module.emitter_enabled 0
+
+    # ros2 bag record --storage mcap -a -x "(.*)theora(.*)|(.*)compressed(.*)"
+    # for recording relevant topics. Have to 
+    # sudo apt-get install ros-humble-rosbag2-storage-mcap
     
 
 def main(args=None):
