@@ -201,6 +201,11 @@ class VoNode(Node):
         # are observing their projections in our current timestep camera image
         # plane.
 
+        # Once we're done processing the current frame, set it to the last.
+        self._last_left_frame = left_image
+        self._last_keypoints = keypoints
+        self._last_descriptors = descriptors
+        self._last_positions = keypoint_3d_positions
 
 
 
