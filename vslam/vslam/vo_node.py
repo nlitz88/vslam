@@ -122,8 +122,8 @@ class VoNode(Node):
         #    need the camera's intrinsics to do this. I.e., the image plane
         #    offset and the pixel-size scale or something like that. I believe
         #    the focal length terms may also contain scale information.
-        keypoint_2d_positions = []
-        keypoint_3d_positions = []
+        keypoint_2d_positions = []  # DON'T KNOW IF WE NEED TO KEEP THIS
+        keypoint_3d_positions = []  # DON'T KNOW IF WE NEED TO KEEP THIS
         for k, keypoint in enumerate(keypoints):
 
             
@@ -151,8 +151,10 @@ class VoNode(Node):
             keypoint_3d_positions.append([X, Y, Z])
         
         # Convert the position arrays into a numpy array.
-        keypoint_2d_positions = np.array(keypoint_2d_positions)
-        keypoint_3d_positions = np.array(keypoint_3d_positions) / 1000 # Convert to meters??
+        # keypoint_2d_positions = np.array(keypoint_2d_positions)
+        keypoint_3d_positions = np.array(keypoint_3d_positions) # / 1000 # Convert to meters?? #
+        # NOTE: Might have to "unconvert" these depending on what PnP.
+        # NOTE: Do we have to convert to a numpy array?
 
 
         # points = zip(keypoints, keypoint_positions)
@@ -180,6 +182,8 @@ class VoNode(Node):
         # OTHERWISE, do feature matching between the last image's features and
         # this images features.
         # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
+        # NOTE: The first parameter == the QUERY descriptors, which are compared
+        # against the TRAIN descriptors == second argument.
         matches = self.matcher.match(descriptors, self._last_descriptors)
         # print(f"Number of matches: {len(matches)}")
         # Sort them in the order of their distance.
@@ -200,6 +204,74 @@ class VoNode(Node):
         # the 3D points are in the previous timestep camera's frame and where we
         # are observing their projections in our current timestep camera image
         # plane.
+
+
+        # What does PNP generally need? Basically, it should take N 2D pixel
+        # coordinates (or image frame coords, not sure) from the CURRENT FRAME
+        # and the 3D position of that feature FROM THE LAST FRAME. It will spit
+        # out the R|t of the camera between the two frames.
+        # https://en.wikipedia.org/wiki/Perspective-n-Point#EPnP
+        # Maybe the opencv page will clarify this for me further:
+        # https://docs.opencv.org/4.x/d5/d1f/calib3d_solvePnP.html
+        # I think the cv::SOLVEPNP_EPNP is the underlying method we want, as it
+        # works for a general collection of points--no coplanar requirement, for
+        # example (like cv::SOLVEPNP_IPPE requires).
+        # https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
+        # documents SolvePnP RANSAC, which is what we'll use, and what Stephen
+        # Ferro used in his approach.
+        
+        # Okay, the 3D points I need are going to be from the last frame. So
+        # last_positions.
+        # The image points are going to be the keypoints from this frame.
+        # TODO: The only real tricky part here is: Using the indices returned
+        # from the matching step to create pairs of 2D keypoints from this frame
+        # to the 3D position of the matched feature from the previous frame.
+
+        # https://docs.opencv.org/4.x/d4/de0/classcv_1_1DMatch.html#details
+        # Each DMatch instance in the list of matches contains the index of the
+        # query descriptor and the train descriptor. Also note that we sort the
+        # matches by their distance (lowest best).
+
+        # So, how can we use these?
+        # For PnP, we want a list of 2D points and a parallel list of the 3D
+        # positions of those identified points, but resolved in the previous
+        # timestep camera frame.
+        # What can I do to generate these lists?
+        current_frame_feature_2d_points = []
+        prev_frame_feature_3d_positions = []
+        # Loop through these for now, come up with a faster way later.
+        for m, match in enumerate(matches):
+            current_frame_feature_idx = match.queryIdx
+            prev_frame_feature_idx = match.trainIdx
+            current_frame_feature_2d_points.append(keypoints[current_frame_feature_idx].pt)
+            prev_frame_feature_3d_positions.append(self._last_positions[prev_frame_feature_idx]) # May have to make a numpy array out of this.
+
+        current_frame_feature_2d_points = np.array(current_frame_feature_2d_points)
+        prev_frame_feature_3d_positions = np.array(prev_frame_feature_3d_positions)
+
+    
+        # Now, with those lists of 2D features locations from the current frame
+        # and the 3D positions of those features (expressed in the previous
+        # camera frame), we can use PnP to solve for the R|t == SE(3)
+        # transformation between these two frames. I.e., attitude and
+        # translation.
+
+        # Also need to grab Camera's instrict parameter matrix for PnP to use as
+        # part of its measurement Jacobian matrix (I think).
+        left_camera_intrinsics = self._left_camera_model.fullIntrinsicMatrix() # Gives us K == 3x3 matrix.
+        left_camera_distortion = self._left_camera_model.distortionCoeffs()
+
+        ret,rvecs, tvecs, inliers = cv2.solvePnPRansac(prev_frame_feature_3d_positions,
+                                                       current_frame_feature_2d_points,
+                                                       left_camera_intrinsics,
+                                                       left_camera_distortion)
+        
+        print(f"pnp result / return: {ret}")
+
+
+
+
+
 
         # Once we're done processing the current frame, set it to the last.
         self._last_left_frame = left_image
