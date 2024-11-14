@@ -9,8 +9,22 @@ import cv2
 from cv_bridge import CvBridge
 from image_geometry import PinholeCameraModel
 
+import numpy as np
 
-# import cv_bridge
+
+# From Google
+def draw_keypoints_with_text(image, keypoints, positions):
+    # Draw keypoints
+    for i, keypoint in enumerate(keypoints):
+        x, y = int(keypoint.pt[0]), int(keypoint.pt[1])
+        cv2.circle(image, (x, y), 4, (0, 255, 0), -1)
+
+        # Add text label
+        text = str(positions[i])
+        cv2.putText(image, text, (x + 5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+    return image
+
 
 class VoNode(Node):
 
@@ -103,9 +117,9 @@ class VoNode(Node):
         # draw only keypoints location,not size and orientation
         left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
         # Convert the debug image to a ROS image so we can publish it.
-        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
-                                                         encoding="rgb8")
-        self._keypoint_image_pub.publish(left_image_keypoints_msg)
+        # left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
+        #                                                  encoding="rgb8")
+        # self._keypoint_image_pub.publish(left_image_keypoints_msg)
 
         # 3. Triangulate 3D position of each feature using stereo depth.
         #    I forgot; before we can do this, have to convert from 2D pixel
@@ -113,7 +127,8 @@ class VoNode(Node):
         #    need the camera's intrinsics to do this. I.e., the image plane
         #    offset and the pixel-size scale or something like that. I believe
         #    the focal length terms may also contain scale information.
-        keypoint_positions = []
+        keypoint_2d_positions = []
+        keypoint_3d_positions = []
         print(f"First keypoint pos: {keypoints[0].pt}")
         for k, keypoint in enumerate(keypoints):
 
@@ -122,9 +137,11 @@ class VoNode(Node):
             # https://docs.opencv.org/4.x/d2/d29/classcv_1_1KeyPoint.html
             px = int(keypoint.pt[0])
             py = int(keypoint.pt[1])
+            keypoint_2d_positions.append([px, py])
 
             # Get depth from depth map at the keypoint position.
             Z = depth_image[py, px]
+            # keypoint_positions.append(Z)
             print(f"Depth of keypoint {k} == {Z}")
             
             # Grab necessary camera intrinsic values from the "K" matrix.
@@ -133,10 +150,23 @@ class VoNode(Node):
             fx = self._left_camera_model.fx()
             fy = self._left_camera_model.fy()
 
-            
+            # Compute the 3D position of each of the keypoints.
+            X = (px - cx)*Z / fx
+            Y = (py - cy)*Z / fy
 
-            # X = (px - self.)
+            keypoint_3d_positions.append([X, Y, Z])
+        
+        # Convert the position arrays into a numpy array.
+        keypoint_2d_positions = np.array(keypoint_2d_positions)
+        keypoint_3d_positions = np.array(keypoint_3d_positions) / 1000
 
+
+        # points = zip(keypoints, keypoint_positions)
+
+        left_image_with_keypoints = draw_keypoints_with_text(left_image, keypoints[:30], keypoint_3d_positions[:30])
+        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
+                                                         encoding="passthrough")
+        self._keypoint_image_pub.publish(left_image_keypoints_msg)
         #     x = (uv[0] - self.cx()) / self.fx()
         # y = (uv[1] - self.cy()) / self.fy()
 
