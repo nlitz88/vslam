@@ -222,13 +222,6 @@ class VoNode(Node):
         # https://docs.opencv.org/4.x/d9/d0c/group__calib3d.html#ga50620f0e26e02caa2e9adc07b5fbf24e
         # documents SolvePnP RANSAC, which is what we'll use, and what Stephen
         # Ferro used in his approach.
-        
-        # Okay, the 3D points I need are going to be from the last frame. So
-        # last_positions.
-        # The image points are going to be the keypoints from this frame.
-        # TODO: The only real tricky part here is: Using the indices returned
-        # from the matching step to create pairs of 2D keypoints from this frame
-        # to the 3D position of the matched feature from the previous frame.
 
         # https://docs.opencv.org/4.x/d4/de0/classcv_1_1DMatch.html#details
         # Each DMatch instance in the list of matches contains the index of the
@@ -239,7 +232,6 @@ class VoNode(Node):
         # For PnP, we want a list of 2D points and a parallel list of the 3D
         # positions of those identified points, but resolved in the previous
         # timestep camera frame.
-        # What can I do to generate these lists?
         current_frame_feature_2d_points = []
         prev_frame_feature_3d_positions = []
         # Loop through these for now, come up with a faster way later.
