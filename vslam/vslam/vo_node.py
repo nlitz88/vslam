@@ -20,8 +20,8 @@ def draw_keypoints_with_text(image, keypoints, positions):
         cv2.circle(image, (x, y), 4, (0, 255, 0), -1)
 
         # Add text label
-        text = str(positions[i])
-        cv2.putText(image, text, (x + 5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+        text = str(f"[{positions[i][0]:.2f}, {positions[i][1]:.2f}, {positions[i][2]:.2f}]")
+        cv2.putText(image, text, (x + 5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 2)
 
     return image
 
@@ -95,7 +95,8 @@ class VoNode(Node):
         # approach I initially had in mind.
 
         # 1. Convert each image into opencv compatible images with cv_bridge.
-        left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg)
+        # left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg)
+        left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg, desired_encoding="rgb8")
         depth_image = self.br.imgmsg_to_cv2(img_msg=depth_image_msg)
 
         # 2. Extract ORB features from the left image. Starting from
@@ -111,7 +112,7 @@ class VoNode(Node):
 
         # DEBUG: Draw keypoints on image and publish.
         # draw only keypoints location,not size and orientation
-        left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
+        # left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
         # Convert the debug image to a ROS image so we can publish it.
         # left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
         #                                                  encoding="rgb8")
@@ -159,8 +160,9 @@ class VoNode(Node):
         # points = zip(keypoints, keypoint_positions)
 
         left_image_with_keypoints = draw_keypoints_with_text(left_image, keypoints[:30], keypoint_3d_positions[:30])
+
         left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
-                                                         encoding="passthrough")
+                                                         encoding="rgb8")
         self._keypoint_image_pub.publish(left_image_keypoints_msg)
         
 
@@ -296,9 +298,7 @@ class VoNode(Node):
     # ros2 launch realsense2_camera rs_launch.py enable_sync:=true
     # depth_module.profile:=848x480x60 enable_infra1:=true enable_color:=false
 
-    # ros2 launch realsense2_camera rs_launch.py enable_sync:=true
-    # depth_module.profile:=848x480x30 enable_infra1:=true enable_color:=false
-    # depth_module.emitter_enabled:=false
+    # ros2 launch realsense2_camera rs_launch.py enable_sync:=true depth_module.profile:=848x480x30 enable_infra1:=true enable_color:=false depth_module.emitter_enabled:=false
 
     # NOTE: For some reason, disabling the emitter at launch time isn't working,
     # so have to set the parameter later:
