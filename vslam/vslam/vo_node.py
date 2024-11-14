@@ -69,6 +69,7 @@ class VoNode(Node):
         self._last_keypoints = None
         self._last_descriptors = None
         self._last_positions = None
+        self._last_tf = None
 
 
     # def left_image_callback(self, left_image: Image):
@@ -177,6 +178,8 @@ class VoNode(Node):
             self._last_keypoints = keypoints
             self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
+            # At first timestep, transformation to first this camera's frame is just identity.
+            self._last_tf = np.eye(4,4)
             return
         
         # OTHERWISE, do feature matching between the last image's features and
@@ -261,16 +264,32 @@ class VoNode(Node):
         left_camera_intrinsics = self._left_camera_model.fullIntrinsicMatrix() # Gives us K == 3x3 matrix.
         left_camera_distortion = self._left_camera_model.distortionCoeffs()
 
-        ret,rvecs, tvecs, inliers = cv2.solvePnPRansac(prev_frame_feature_3d_positions,
-                                                       current_frame_feature_2d_points,
-                                                       left_camera_intrinsics,
-                                                       left_camera_distortion)
-        
-        print(f"pnp result / return: {ret}")
+        ret, rvecs, tvecs, inliers = cv2.solvePnPRansac(prev_frame_feature_3d_positions,
+                                                        current_frame_feature_2d_points,
+                                                        left_camera_intrinsics,
+                                                        left_camera_distortion)
+        # rvecs == rotation as a "Rodrigues" vector? Use their functions to
+        # convert this back to a rotation matrix.
+        # https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga61585db663d9da06b68e70cfbf6a1eac
+        R = cv2.Rodrigues(rvecs)[0]
+        t = tvecs
+        # Form SE(3) "T" 4x4 matrix from R and t.
+        T = np.zeros((4,4))
+        T[0:3, 0:3] = R
+        T[0:3, 3] = t.T
+        T[3, 3] = 1
 
-
-
-
+        # Now that we (in theory) have the transformation between these two
+        # successive camera frames, we can obtain our running estimate of the
+        # overall transformation from the first timestep's camera frame to the
+        # current timestep's camera frame. Being that our poses == R|t are
+        # SE(3), matrix multiplication is used to combine them. I.e., you
+        # compose SE(3) elements by multiplying them together. This
+        # transformation is what we intuitively think of as the robot's position
+        # in the world frame whose origin is the camera frame at the first
+        # timestep.
+        self._last_tf = self._last_tf @ T
+        self.get_logger().debug(f"New pose: {T}")
 
 
         # Once we're done processing the current frame, set it to the last.
