@@ -9,6 +9,7 @@ from image_geometry import PinholeCameraModel
 from message_filters import Subscriber, TimeSynchronizer
 from tf2_ros import TransformBroadcaster
 
+from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import Image, CameraInfo
 
@@ -35,6 +36,9 @@ class VoNode(Node):
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
         self._matched_points_image_pub = self.create_publisher(Image, "/matches", 10)
+
+        # Initialize the transform broadcaster
+        self.tf_broadcaster = TransformBroadcaster(self)
 
         # Create subscriber for CameraInfo messages.
         self._need_info = True
@@ -70,7 +74,10 @@ class VoNode(Node):
         self._last_keypoints = None
         self._last_descriptors = None
         self._last_positions = None
-        self._last_tf = None
+        # self._last_tf = None
+
+        self.R = None
+        self.t = None
 
 
     # def left_image_callback(self, left_image: Image):
@@ -180,7 +187,12 @@ class VoNode(Node):
             self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
             # At first timestep, transformation to first this camera's frame is just identity.
-            self._last_tf = np.eye(4,4)
+            # self._last_tf = np.eye(4,4)
+            # self.publish_camera_transform(child_frame=left_image_msg.header.frame_id,
+            #                           parent_frame="odom",
+            #                           transform=self._last_tf)
+            self.R = np.eye(3,3)
+            self.t = np.zeros((3,1), dtype=float)
             return
         
         # OTHERWISE, do feature matching between the last image's features and
@@ -266,24 +278,37 @@ class VoNode(Node):
         # https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga61585db663d9da06b68e70cfbf6a1eac
         R = cv2.Rodrigues(rvecs)[0]
         t = tvecs
-        # Form SE(3) "T" 4x4 matrix from R and t.
-        T = np.zeros((4,4))
-        T[0:3, 0:3] = R
-        T[0:3, 3] = t.T
-        T[3, 3] = 1
 
-        # Now that we (in theory) have the transformation between these two
-        # successive camera frames, we can obtain our running estimate of the
-        # overall transformation from the first timestep's camera frame to the
-        # current timestep's camera frame. Being that our poses == R|t are
-        # SE(3), matrix multiplication is used to combine them. I.e., you
-        # compose SE(3) elements by multiplying them together. This
-        # transformation is what we intuitively think of as the robot's position
-        # in the world frame whose origin is the camera frame at the first
-        # timestep.
-        self._last_tf = self._last_tf @ T
-        self.get_logger().debug(f"New pose: {T}")
+        self.R = self.R @ R
+        self.t = self.t + R @ tvecs
 
+        self.get_logger().info(f"New position: {self.t}")
+
+        # # Form SE(3) "T" 4x4 matrix from R and t.
+        # T = np.zeros((4,4))
+        # T[0:3, 0:3] = R
+        # T[0:3, 3] = t.T
+        # T[3, 3] = 1
+
+        # # Now that we (in theory) have the transformation between these two
+        # # successive camera frames, we can obtain our running estimate of the
+        # # overall transformation from the first timestep's camera frame to the
+        # # current timestep's camera frame. Being that our poses == R|t are
+        # # SE(3), matrix multiplication is used to combine them. I.e., you
+        # # compose SE(3) elements by multiplying them together. This
+        # # transformation is what we intuitively think of as the robot's position
+        # # in the world frame whose origin is the camera frame at the first
+        # # timestep.
+        # self._last_tf = self._last_tf @ T
+        # # self.get_logger().debug(f"New pose: {T}")
+        # self.get_logger().info(f"New Position: {self._last_tf[0:3, 3]}")
+
+        
+        self.publish_camera_transform(child_frame="camera_link",
+                                      parent_frame="odom",
+                                      rotation=None,
+                                      translation=self.t)
+        
 
         # Once we're done processing the current frame, set it to the last.
         self._last_left_frame = left_image
@@ -300,6 +325,40 @@ class VoNode(Node):
             self.get_logger().info("Ingesting new camera info message!")
             self._left_camera_model.fromCameraInfo(left_camera_info_msg)
             self._need_info = False
+
+    def publish_camera_transform(self, child_frame, parent_frame, rotation, translation):
+
+        # Publish new transform from odom to whatever frame this is?
+        # MAYBE CHECK CAMERA_INFO OR THE IMAGE FIELD TO SEE WHAT FRAME IT SAYS
+        # IT'S IN.
+
+
+        t = TransformStamped()
+
+        # Read message content and assign it to
+        # corresponding tf variables
+        t.header.stamp = self.get_clock().now().to_msg()
+        t.header.frame_id = parent_frame
+        t.child_frame_id = child_frame
+
+        # Turtle only exists in 2D, thus we get x and y translation
+        # coordinates from the message and set the z coordinate to 0
+        t.transform.translation.x = translation[0,0]
+        t.transform.translation.y = translation[1,0]
+        t.transform.translation.z = translation[2,0]
+
+        # For the same reason, turtle can only rotate around one axis
+        # and this why we set rotation in x and y to 0 and obtain
+        # rotation in z axis from the message
+        # q = quaternion_from_euler(0, 0, msg.theta)
+        # t.transform.rotation.x = q[0]
+        # t.transform.rotation.y = q[1]
+        # t.transform.rotation.z = q[2]
+        # t.transform.rotation.w = q[3]
+        # t.transform.rotation = 
+
+        # Send the transformation
+        self.tf_broadcaster.sendTransform(t)
 
 
     # What I roughly need to do for monocular VO:
