@@ -72,6 +72,7 @@ class VoNode(Node):
 
         # Store previous frame's images, features, and feature positions.
         self._last_left_frame = None
+        self._last_left_frame_with_keypoints = None
         self._last_keypoints = None
         self._last_descriptors = None
         self._last_positions = None
@@ -113,11 +114,10 @@ class VoNode(Node):
 
         # DEBUG: Draw keypoints on image and publish.
         # draw only keypoints location,not size and orientation
-        # left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
+        left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
         # Convert the debug image to a ROS image so we can publish it.
-        # left_image_keypoi                                                  nts_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints,
-        #encoding="rgb8")
-        # self._keypoint_image_pub.publish(left_image_keypoints_msg)
+        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
+        self._keypoint_image_pub.publish(left_image_keypoints_msg)
 
         # 3. Triangulate 3D position of each feature using stereo depth.
         #    I forgot; before we can do this, have to convert from 2D pixel
@@ -162,15 +162,16 @@ class VoNode(Node):
         # camera's frame. Note that this frame likely follows a different
         # convention from the ROS convention. Have to use a TF to get it into
         # the camera_link frame if we want that instead. TODO for later.
-        left_image_with_keypoints = draw_keypoints_with_text(left_image, keypoints[:30], keypoint_3d_positions[:30])
-        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
-        self._keypoint_image_pub.publish(left_image_keypoints_msg)
+        # left_image_with_keypoints = draw_keypoints_with_text(left_image, keypoints[:40], keypoint_3d_positions[:30])
+        # left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
+        # self._keypoint_image_pub.publish(left_image_keypoints_msg)
         
 
         # If this is the first set of images we're receiving, then there is no
         # transformation we can estimate--bail out. Before doing that, 
         if self._last_left_frame is None:
             self._last_left_frame = left_image
+            self._last_left_frame_with_keypoints = left_image_with_keypoints
             self._last_keypoints = keypoints
             self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
@@ -193,11 +194,11 @@ class VoNode(Node):
         matches = sorted(matches, key = lambda x:x.distance)
 
         # Draw first 10 matches.
-        matches_image = cv2.drawMatches(left_image,
+        matches_image = cv2.drawMatches(left_image_with_keypoints,
                                         keypoints,
-                                        self._last_left_frame,
+                                        self._last_left_frame_with_keypoints,
                                         self._last_keypoints,
-                                        matches[:10],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+                                        matches[:20],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
         matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
         self._matched_points_image_pub.publish(matches_image_msg)
 
@@ -309,6 +310,7 @@ class VoNode(Node):
 
             # Once we're done processing the current frame, set it to the last.
             self._last_left_frame = left_image
+            self._last_left_frame_with_keypoints = left_image_with_keypoints
             self._last_keypoints = keypoints
             self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
