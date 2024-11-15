@@ -36,6 +36,7 @@ class VoNode(Node):
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
         self._matched_points_image_pub = self.create_publisher(Image, "/matches", 10)
+        self._odom_publisher = self.create_publisher(Odometry, "camera_odom", 10)
 
         # Initialize the transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -67,7 +68,7 @@ class VoNode(Node):
         self.orb = cv2.ORB_create()
         # Create feature matcher.
         # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
 
         # Store previous frame's images, features, and feature positions.
         self._last_left_frame = None
@@ -78,13 +79,6 @@ class VoNode(Node):
 
         self.R = None
         self.t = None
-
-
-    # def left_image_callback(self, left_image: Image):
-    #     self.get_logger().debug(f"Received new left image with timestamp: {left_image.header.stamp}")
-
-    # def depth_image_callback(self, depth_image: Image):
-    #     self.get_logger().debug(f"Received new depth image with timestamp: {depth_image.header.stamp}")
 
 
     def infra_depth_sync_callback(self, left_image_msg: Image, depth_image_msg: Image):
@@ -140,13 +134,10 @@ class VoNode(Node):
             # https://docs.opencv.org/4.x/d2/d29/classcv_1_1KeyPoint.html
             px = int(keypoint.pt[0])
             py = int(keypoint.pt[1])
-            keypoint_2d_positions.append([px, py])
 
             # Get depth from depth map at the keypoint position.
             Z = depth_image[py, px]
-            # keypoint_positions.append(Z)
-            # print(f"Depth of keypoint {k} == {Z}")
-            
+
             # Grab necessary camera intrinsic values from the "K" matrix.
             cx = self._left_camera_model.cx()
             cy = self._left_camera_model.cy()
@@ -160,13 +151,12 @@ class VoNode(Node):
             keypoint_3d_positions.append([X, Y, Z])
         
         # Convert the position arrays into a numpy array.
-        # keypoint_2d_positions = np.array(keypoint_2d_positions)
-        keypoint_3d_positions = np.array(keypoint_3d_positions) # / 1000 # Convert to meters?? #
+        keypoint_2d_positions = np.array(keypoint_2d_positions)
+        keypoint_3d_positions = np.array(keypoint_3d_positions)
         # NOTE: Might have to "unconvert" these depending on what PnP.
         # NOTE: Do we have to convert to a numpy array?
+        # TODO: FILTER OUT KEYPOINTS WHOSE DEPTH == 0!
 
-
-        # points = zip(keypoints, keypoint_positions)
 
         # Publish keypoints with their respective 3D positions in the left
         # camera's frame. Note that this frame likely follows a different
@@ -176,8 +166,6 @@ class VoNode(Node):
         left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
         self._keypoint_image_pub.publish(left_image_keypoints_msg)
         
-
-
 
         # If this is the first set of images we're receiving, then there is no
         # transformation we can estimate--bail out. Before doing that, 
@@ -201,17 +189,15 @@ class VoNode(Node):
         # NOTE: The first parameter == the QUERY descriptors, which are compared
         # against the TRAIN descriptors == second argument.
         matches = self.matcher.match(descriptors, self._last_descriptors)
-        # print(f"Number of matches: {len(matches)}")
         # Sort them in the order of their distance.
         matches = sorted(matches, key = lambda x:x.distance)
 
-        # TEMP: Draw matches
         # Draw first 10 matches.
         matches_image = cv2.drawMatches(left_image,
-                               keypoints,
-                               self._last_left_frame,
-                               self._last_keypoints,
-                               matches[:10],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+                                        keypoints,
+                                        self._last_left_frame,
+                                        self._last_keypoints,
+                                        matches[:10],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
         matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
         self._matched_points_image_pub.publish(matches_image_msg)
 
@@ -220,7 +206,6 @@ class VoNode(Node):
         # the 3D points are in the previous timestep camera's frame and where we
         # are observing their projections in our current timestep camera image
         # plane.
-
 
         # What does PNP generally need? Basically, it should take N 2D pixel
         # coordinates (or image frame coords, not sure) from the CURRENT FRAME
@@ -253,7 +238,10 @@ class VoNode(Node):
             prev_frame_feature_idx = match.trainIdx
             current_frame_feature_2d_points.append(keypoints[current_frame_feature_idx].pt)
             prev_frame_feature_3d_positions.append(self._last_positions[prev_frame_feature_idx]) # May have to make a numpy array out of this.
-
+        # TEMP: Remove
+        if len(prev_frame_feature_3d_positions) < 8:
+            return
+        # Convert the resulting lists to numpy arrays.
         current_frame_feature_2d_points = np.array(current_frame_feature_2d_points)
         prev_frame_feature_3d_positions = np.array(prev_frame_feature_3d_positions)
 
@@ -263,7 +251,6 @@ class VoNode(Node):
         # camera frame), we can use PnP to solve for the R|t == SE(3)
         # transformation between these two frames. I.e., attitude and
         # translation.
-
         # Also need to grab Camera's instrict parameter matrix for PnP to use as
         # part of its measurement Jacobian matrix (I think).
         left_camera_intrinsics = self._left_camera_model.fullIntrinsicMatrix() # Gives us K == 3x3 matrix.
@@ -273,48 +260,58 @@ class VoNode(Node):
                                                         current_frame_feature_2d_points,
                                                         left_camera_intrinsics,
                                                         left_camera_distortion)
-        # rvecs == rotation as a "Rodrigues" vector? Use their functions to
-        # convert this back to a rotation matrix.
-        # https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga61585db663d9da06b68e70cfbf6a1eac
-        R = cv2.Rodrigues(rvecs)[0]
-        t = tvecs
-
-        self.R = self.R @ R
-        self.t = self.t + R @ tvecs
-
-        self.get_logger().info(f"New position: {self.t}")
-
-        # # Form SE(3) "T" 4x4 matrix from R and t.
-        # T = np.zeros((4,4))
-        # T[0:3, 0:3] = R
-        # T[0:3, 3] = t.T
-        # T[3, 3] = 1
-
-        # # Now that we (in theory) have the transformation between these two
-        # # successive camera frames, we can obtain our running estimate of the
-        # # overall transformation from the first timestep's camera frame to the
-        # # current timestep's camera frame. Being that our poses == R|t are
-        # # SE(3), matrix multiplication is used to combine them. I.e., you
-        # # compose SE(3) elements by multiplying them together. This
-        # # transformation is what we intuitively think of as the robot's position
-        # # in the world frame whose origin is the camera frame at the first
-        # # timestep.
-        # self._last_tf = self._last_tf @ T
-        # # self.get_logger().debug(f"New pose: {T}")
-        # self.get_logger().info(f"New Position: {self._last_tf[0:3, 3]}")
+        
+        # TODO: REMOVE DEBUGGING LINES BELOW.
+        tvecs = tvecs / 1000 # Convert to meters from mm ?
+        tvecs[2] = 0
+        print(f"Tvecs: {tvecs}")
+        if np.linalg.norm(tvecs) > 10:
+            self.get_logger().warn(f"Warning: Translation growing rapidly! T vector is {tvecs}")
+            return
 
         
-        self.publish_camera_transform(child_frame="camera_link",
-                                      parent_frame="odom",
-                                      rotation=None,
-                                      translation=self.t)
-        
+        if (ret):
+            # rvecs == rotation as a "Rodrigues" vector? Use their functions to
+            # convert this back to a rotation matrix.
+            # https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga61585db663d9da06b68e70cfbf6a1eac
+            R = cv2.Rodrigues(rvecs)[0]
 
-        # Once we're done processing the current frame, set it to the last.
-        self._last_left_frame = left_image
-        self._last_keypoints = keypoints
-        self._last_descriptors = descriptors
-        self._last_positions = keypoint_3d_positions
+            self.R = self.R @ R
+            self.t = self.t + R @ tvecs
+
+            self.get_logger().info(f"New position: {self.t}")
+
+            # # Form SE(3) "T" 4x4 matrix from R and t.
+            # T = np.zeros((4,4))
+            # T[0:3, 0:3] = R
+            # T[0:3, 3] = t.T
+            # T[3, 3] = 1
+
+            # # Now that we (in theory) have the transformation between these two
+            # # successive camera frames, we can obtain our running estimate of the
+            # # overall transformation from the first timestep's camera frame to the
+            # # current timestep's camera frame. Being that our poses == R|t are
+            # # SE(3), matrix multiplication is used to combine them. I.e., you
+            # # compose SE(3) elements by multiplying them together. This
+            # # transformation is what we intuitively think of as the robot's position
+            # # in the world frame whose origin is the camera frame at the first
+            # # timestep.
+            # self._last_tf = self._last_tf @ T
+            # # self.get_logger().debug(f"New pose: {T}")
+            # self.get_logger().info(f"New Position: {self._last_tf[0:3, 3]}")
+
+            
+            self.publish_camera_transform(child_frame="camera_link",
+                                        parent_frame="odom",
+                                        rotation=None,
+                                        translation=self.t)
+            
+
+            # Once we're done processing the current frame, set it to the last.
+            self._last_left_frame = left_image
+            self._last_keypoints = keypoints
+            self._last_descriptors = descriptors
+            self._last_positions = keypoint_3d_positions
 
 
 
@@ -360,71 +357,15 @@ class VoNode(Node):
         # Send the transformation
         self.tf_broadcaster.sendTransform(t)
 
+        # Create odometry message.
+        odom_msg = Odometry()
+        odom_msg.header.stamp = t.header.stamp
+        odom_msg.header.frame_id = parent_frame
+        odom_msg.pose.pose.position.x = translation[0,0]
+        odom_msg.pose.pose.position.y = translation[1,0]
+        odom_msg.pose.pose.position.z = translation[2,0]
 
-    # What I roughly need to do for monocular VO:
-
-    # 1. Use cv_bridge to take ROS images and get them into a format we can work
-    #    with in opencv.
-
-    # 2. Use opencv to find features and generate ORB descriptors for them. I
-    #    THINK this is a builtin function, we'll see.
-    
-    # 3. 
-
-    
-    # FOR STEREO VO:
-    
-    # 1. Maybe find features in monocular image? Then, using the extrinsics
-    #    between RGB and infra cameras, find where those features land in the
-    #    infrared images.
-    # 2. THEN, can use stereo depth to identify...
-    # ACTUALLY
-    # They already give us the depth image. Which image is that computed over?
-    # One of the infrared views?
-
-    # Could see what Stephen Ferro did in his implementation.
-
-    # Basically, one way or another, the most basic implementation should: Track
-    # features and their 3D positions, and then use that to estimate the
-    # camera's motion between frames. I.e., the camera's motion should be the
-    # negative of the features motion in 3D. Probably have to do some basic
-    # outlier rejection--probably not trivial for me though.
-
-    # 
-
-
-    # OKAY, per Davide's VO tutorial, I think I am interested in using 3D-->3D
-    # for motion estimation. I.e., triangulating the 3D positions of the
-    # features from each frame and computing the difference between those
-    # positions == the camera's transformation (also using RANSAC).
-
-    # Only thing I don't love about this: How can we instead (eventually) set
-    # this up as an optimization problem?
-
-    # One thing he points out: Therefore, 3D-3D motion estimation methods will
-    # drift much more quickly than 3D-2D and 2D-2D methods
-    
-    # Sounds like the reason being because: Each time you compute the 3D
-    # positions via triangulation (whether trivially with a stereo pair or the
-    # optimal way), there is uncertainty immediately itnroduced to your
-    # trajectory estimate. AND, you are doing this at each timestep, so you are
-    # accumulating more and more uncertainty at every step without any
-    # mitigation?
-
-    # Therefore, if you're going to do 3D to 3D (or maybe any method in
-    # general), it is important to select KEY FRAMES. I.e., only updating the
-    # pose once sufficient parallax or change in the scene (==movement of the
-    # camera) has occurred.
-
-    # He goes on to say that in general
-
-
-
-
-
-    # Although 3D-3D will drift pretty quickly (especially without keyframing),
-    # I think it'll be a simple starting point--or at least a method that I can
-    # demonstrate is not good and should not be pursued further.
+        self._odom_publisher.publish(odom_msg)
 
 
     # 1. Create subscriber for left stereo image (as it corresponds with depth
@@ -471,14 +412,8 @@ class VoNode(Node):
 
 def main(args=None):
     rclpy.init(args=args)
-
     vo_node = VoNode()
-
     rclpy.spin(vo_node)
-
-    # Destroy the node explicitly
-    # (optional - otherwise it will be done automatically
-    # when the garbage collector destroys the node object)
     vo_node.destroy_node()
     rclpy.shutdown()
 
