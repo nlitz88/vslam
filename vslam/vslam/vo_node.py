@@ -162,9 +162,9 @@ class VoNode(Node):
         # camera's frame. Note that this frame likely follows a different
         # convention from the ROS convention. Have to use a TF to get it into
         # the camera_link frame if we want that instead. TODO for later.
-        # left_image_with_keypoints = draw_keypoints_with_text(left_image, keypoints[:40], keypoint_3d_positions[:30])
-        # left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
-        # self._keypoint_image_pub.publish(left_image_keypoints_msg)
+        # left_image_with_keypoints_measured = draw_keypoints_with_text(left_image, keypoints[:20], keypoint_3d_positions[:20])
+        # left_image_keypoints_measured_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints_measured, encoding="rgb8")
+        # self._keypoint_image_pub.publish(left_image_keypoints_measured_msg)
         
 
         # If this is the first set of images we're receiving, then there is no
@@ -263,8 +263,8 @@ class VoNode(Node):
                                                         left_camera_distortion)
         
         # TODO: REMOVE DEBUGGING LINES BELOW.
-        tvecs = tvecs / 1000 # Convert to meters from mm ?
-        tvecs[2] = 0
+        tvecs = tvecs / 100000 # Convert to meters from mm -- scaling down even more so I can see the progression in RVIZ.
+        # tvecs[2] = 0
         print(f"Tvecs: {tvecs}")
         if np.linalg.norm(tvecs) > 10:
             self.get_logger().warn(f"Warning: Translation growing rapidly! T vector is {tvecs}")
