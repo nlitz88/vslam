@@ -125,10 +125,10 @@ class VoNode(Node):
 
         # DEBUG: Draw keypoints on image and publish.
         # draw only keypoints location,not size and orientation
-        left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
-        # Convert the debug image to a ROS image so we can publish it.
-        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
-        self._keypoint_image_pub.publish(left_image_keypoints_msg)
+        # left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
+        # # Convert the debug image to a ROS image so we can publish it.
+        # left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
+        # self._keypoint_image_pub.publish(left_image_keypoints_msg)
 
         # 3. Triangulate 3D position of each feature using stereo depth.
         #    I forgot; before we can do this, have to convert from 2D pixel
@@ -136,8 +136,14 @@ class VoNode(Node):
         #    need the camera's intrinsics to do this. I.e., the image plane
         #    offset and the pixel-size scale or something like that. I believe
         #    the focal length terms may also contain scale information.
+        # NOTE: I make these lists here so I can "filter out" the keypoints (and
+        # their corresponding descriptors) that correspond with an invalid (0)
+        # depth!
         keypoint_2d_positions = []  # DON'T KNOW IF WE NEED TO KEEP THIS
+        keypoint_descriptors = []
         keypoint_3d_positions = []  # DON'T KNOW IF WE NEED TO KEEP THIS
+        # print(f"Type of keypoints: {type(keypoints)}, each: {type(keypoints[0])}")
+        # print(f"Type of descriptors: {type(descriptors)}, each: {type(descriptors[0])}")
         for k, keypoint in enumerate(keypoints):
 
             
@@ -148,6 +154,17 @@ class VoNode(Node):
 
             # Get depth from depth map at the keypoint position.
             Z = depth_image[py, px]
+
+            if (Z < 100 or Z > 2000):
+                continue
+            # If the depth IS valid, then keep the keypoint by adding it to the
+            # new list of keypoints.
+            keypoint_2d_positions.append(keypoint)
+            keypoint_descriptors.append(descriptors[k])
+
+            # TODO: Figure out a way to characterize the variance of the range
+            # measurement error at the given range, as we will eventually need
+            # this in the sensor model we use for the realsense!
 
             # Grab necessary camera intrinsic values from the "K" matrix.
             cx = self._left_camera_model.cx()
@@ -162,11 +179,20 @@ class VoNode(Node):
             keypoint_3d_positions.append([X, Y, Z])
         
         # Convert the position arrays into a numpy array.
-        keypoint_2d_positions = np.array(keypoint_2d_positions)
+        # keypoint_2d_positions = np.array(keypoint_2d_positions)
+        keypoints = tuple(keypoint_2d_positions)
+        descriptors = np.array(keypoint_descriptors)
         keypoint_3d_positions = np.array(keypoint_3d_positions)
         # NOTE: Might have to "unconvert" these depending on what PnP.
         # NOTE: Do we have to convert to a numpy array?
         # TODO: FILTER OUT KEYPOINTS WHOSE DEPTH == 0!
+
+        # Print keypoints AFTER filtering.
+        left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
+        # Convert the debug image to a ROS image so we can publish it.
+        left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
+        self._keypoint_image_pub.publish(left_image_keypoints_msg)
+
 
 
         # Publish keypoints with their respective 3D positions in the left
@@ -205,13 +231,13 @@ class VoNode(Node):
         matches = sorted(matches, key = lambda x:x.distance)
 
         # Draw first 10 matches.
-        matches_image = cv2.drawMatches(left_image_with_keypoints,
-                                        keypoints,
-                                        self._last_left_frame_with_keypoints,
-                                        self._last_keypoints,
-                                        matches[:20],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-        matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
-        self._matched_points_image_pub.publish(matches_image_msg)
+        # matches_image = cv2.drawMatches(left_image_with_keypoints,
+        #                                 keypoints,
+        #                                 self._last_left_frame_with_keypoints,
+        #                                 self._last_keypoints,
+        #                                 matches[:20],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        # matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
+        # self._matched_points_image_pub.publish(matches_image_msg)
 
         # For the matches we find, our goal is to use 3D-2D correspondences and
         # use PNP to recover what the camera's R|t must have been based on where
@@ -251,8 +277,8 @@ class VoNode(Node):
             current_frame_feature_2d_points.append(keypoints[current_frame_feature_idx].pt)
             prev_frame_feature_3d_positions.append(self._last_positions[prev_frame_feature_idx]) # May have to make a numpy array out of this.
         # TEMP: Remove
-        if len(prev_frame_feature_3d_positions) < 8:
-            return
+        # if len(prev_frame_feature_3d_positions) < 8:
+        #     return
         # Convert the resulting lists to numpy arrays.
         current_frame_feature_2d_points = np.array(current_frame_feature_2d_points)
         prev_frame_feature_3d_positions = np.array(prev_frame_feature_3d_positions)
@@ -274,7 +300,7 @@ class VoNode(Node):
                                                         left_camera_distortion)
         
         # TODO: REMOVE DEBUGGING LINES BELOW.
-        tvecs = tvecs / 100000 # Convert to meters from mm -- scaling down even more so I can see the progression in RVIZ.
+        tvecs = tvecs / 1000 # Convert to meters from mm -- scaling down even more so I can see the progression in RVIZ.
         # tvecs[2] = 0
         print(f"Tvecs: {tvecs}")
         if np.linalg.norm(tvecs) > 10:
