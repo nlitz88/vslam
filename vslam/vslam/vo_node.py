@@ -81,6 +81,13 @@ class VoNode(Node):
         self.R = None
         self.t = None
 
+        # Set up lookup table for gamma correction to "even out" image exposure.
+        # https://docs.opencv.org/3.4/d3/dc1/tutorial_basic_linear_transform.html
+        gamma = 0.5
+        self.lookUpTable = np.empty((1,256), np.uint8)
+        for i in range(256):
+            self.lookUpTable[0,i] = np.clip(pow(i / 255.0, gamma) * 255.0, 0, 255)
+
 
     def infra_depth_sync_callback(self, left_image_msg: Image, depth_image_msg: Image):
 
@@ -103,6 +110,10 @@ class VoNode(Node):
         # left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg)
         left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg, desired_encoding="rgb8")
         depth_image = self.br.imgmsg_to_cv2(img_msg=depth_image_msg)
+
+        # Perform gamma correction on the left image before detecting keypoints.
+        
+        left_image = cv2.LUT(left_image, self.lookUpTable)
 
         # 2. Extract ORB features from the left image. Starting from
         #    https://docs.opencv.org/4.x/d1/d89/tutorial_py_orb.html
