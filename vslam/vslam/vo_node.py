@@ -33,10 +33,13 @@ class VoNode(Node):
     def __init__(self):
         super().__init__('vo_node')
 
+        self.frame_counter = 0
+
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
         self._matched_points_image_pub = self.create_publisher(Image, "/matches", 10)
         self._odom_publisher = self.create_publisher(Odometry, "camera_odom", 10)
+        self._filtered_depth_pub = self.create_publisher(Image, "filtered_depth", 10)
 
         # Initialize the transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -95,6 +98,13 @@ class VoNode(Node):
         if self._need_info:
             self.get_logger().warn("Received left and depth image, but haven't received camera parameters yet on camera info topic.")
             return
+        
+        if self.frame_counter != 0:
+            self.frame_counter += 1
+            if self.frame_counter == 3:
+                self.frame_counter = 0
+            return
+        
 
         self.get_logger().debug(f"Received new left infra image and depth image pair with matching timestamps: \
                                 infra timestamp: {left_image_msg.header.stamp} \
@@ -110,10 +120,16 @@ class VoNode(Node):
         # left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg)
         left_image = self.br.imgmsg_to_cv2(img_msg=left_image_msg, desired_encoding="rgb8")
         depth_image = self.br.imgmsg_to_cv2(img_msg=depth_image_msg)
+        # print(f"depth image type: {depth_image.dtype}") # Remember, it's a
+        # numpy array!
 
-        # Perform gamma correction on the left image before detecting keypoints.
-        
+        # Perform gamma correction on the left image before detecting keypoints.        
         left_image = cv2.LUT(left_image, self.lookUpTable)
+
+        # Perform bilateral filtering on the depth image.
+        depth_image = cv2.convertScaleAbs(depth_image)
+        depth_image = cv2.bilateralFilter(depth_image,9,25,25)
+        self._filtered_depth_pub.publish(self.br.cv2_to_imgmsg(depth_image))
 
         # 2. Extract ORB features from the left image. Starting from
         #    https://docs.opencv.org/4.x/d1/d89/tutorial_py_orb.html
@@ -155,8 +171,8 @@ class VoNode(Node):
             # Get depth from depth map at the keypoint position.
             Z = depth_image[py, px]
 
-            if (Z < 100 or Z > 2000):
-                continue
+            # if (Z < 100 or Z > 2000):
+            #     continue
             # If the depth IS valid, then keep the keypoint by adding it to the
             # new list of keypoints.
             keypoint_2d_positions.append(keypoint)
@@ -219,6 +235,7 @@ class VoNode(Node):
             #                           transform=self._last_tf)
             self.R = np.eye(3,3)
             self.t = np.zeros((3,1), dtype=float)
+            self.frame_counter += 1
             return
         
         # OTHERWISE, do feature matching between the last image's features and
@@ -294,10 +311,15 @@ class VoNode(Node):
         left_camera_intrinsics = self._left_camera_model.fullIntrinsicMatrix() # Gives us K == 3x3 matrix.
         left_camera_distortion = self._left_camera_model.distortionCoeffs()
 
-        ret, rvecs, tvecs, inliers = cv2.solvePnPRansac(prev_frame_feature_3d_positions,
-                                                        current_frame_feature_2d_points,
-                                                        left_camera_intrinsics,
-                                                        left_camera_distortion)
+        try:
+            ret, rvecs, tvecs, inliers = cv2.solvePnPRansac(prev_frame_feature_3d_positions,
+                                                            current_frame_feature_2d_points,
+                                                            left_camera_intrinsics,
+                                                            left_camera_distortion)
+        except Exception as exc:
+            print(exc)
+            self.frame_counter += 1
+            return
         
         # TODO: REMOVE DEBUGGING LINES BELOW.
         tvecs = tvecs / 1000 # Convert to meters from mm -- scaling down even more so I can see the progression in RVIZ.
@@ -305,6 +327,7 @@ class VoNode(Node):
         print(f"Tvecs: {tvecs}")
         if np.linalg.norm(tvecs) > 10:
             self.get_logger().warn(f"Warning: Translation growing rapidly! T vector is {tvecs}")
+            self.frame_counter += 1
             return
 
         
@@ -352,7 +375,7 @@ class VoNode(Node):
             self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
 
-
+        self.frame_counter += 1
 
     # https://answers.ros.org/question/393979/projecting-3d-points-into-pixel-using-image_geometrypinholecameramodel/
     def left_camera_info_callback(self, left_camera_info_msg):
