@@ -23,7 +23,8 @@ def generate_launch_description():
             executable='vo_node',
             name='vo_node',
             remappings=[('left_image', 'camera/infra1/image_rect_raw'),
-                        ('depth_image', 'camera/depth/image_rect_raw')]
+                        ('depth_image', 'camera/depth/image_rect_raw'),
+                        ('camera_info', 'camera/infra1/camera_info')]
         ),
         # TODO: Bring up ros2 bag with the provided path. This path
         # should be a required argument to use the launch file. Would also be

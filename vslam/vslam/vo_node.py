@@ -41,8 +41,8 @@ class VoNode(Node):
         self.declare_parameter("orb_max_features", 1000)
 
         # Create publisher for keypoint image.
-        self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
-        self._matched_points_image_pub = self.create_publisher(Image, "/matches", 10)
+        self._keypoint_image_pub = self.create_publisher(Image, "keypoints", 10)
+        self._matched_points_image_pub = self.create_publisher(Image, "matches", 10)
         self._odom_publisher = self.create_publisher(Odometry, "camera_odom", 10)
         self._filtered_depth_pub = self.create_publisher(Image, "filtered_depth", 10)
         self._inlier_count_pub = self.create_publisher(UInt32, "inlier_count", 10)
@@ -55,7 +55,7 @@ class VoNode(Node):
         self._received_intrinsics = False
         self._left_camera_model = PinholeCameraModel()
         self._left_cam_info = self.create_subscription(msg_type=CameraInfo,
-                                                  topic="/camera/infra1/camera_info",
+                                                  topic="camera_info",
                                                   callback=self.left_camera_info_callback,
                                                   qos_profile=10)
 
