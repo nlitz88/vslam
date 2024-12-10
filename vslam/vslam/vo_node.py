@@ -8,6 +8,7 @@ from cv_bridge import CvBridge
 from image_geometry import PinholeCameraModel
 from message_filters import Subscriber, TimeSynchronizer
 from tf2_ros import TransformBroadcaster
+from transforms3d import quaternions, euler
 
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
@@ -33,8 +34,6 @@ class VoNode(Node):
     def __init__(self):
         super().__init__('vo_node')
 
-        self.frame_counter = 0
-
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
         self._matched_points_image_pub = self.create_publisher(Image, "/matches", 10)
@@ -45,7 +44,7 @@ class VoNode(Node):
         self.tf_broadcaster = TransformBroadcaster(self)
 
         # Create subscriber for CameraInfo messages.
-        self._need_info = True
+        self._received_intrinsics = False
         self._left_camera_model = PinholeCameraModel()
         self._left_cam_info = self.create_subscription(msg_type=CameraInfo,
                                                   topic="/camera/infra1/camera_info",
@@ -95,16 +94,9 @@ class VoNode(Node):
     def infra_depth_sync_callback(self, left_image_msg: Image, depth_image_msg: Image):
 
         # If we haven't yet received camera parameters, bail out.
-        if self._need_info:
+        if not self._received_intrinsics:
             self.get_logger().warn("Received left and depth image, but haven't received camera parameters yet on camera info topic.")
             return
-        
-        if self.frame_counter != 0:
-            self.frame_counter += 1
-            if self.frame_counter == 3:
-                self.frame_counter = 0
-            return
-        
 
         self.get_logger().debug(f"Received new left infra image and depth image pair with matching timestamps: \
                                 infra timestamp: {left_image_msg.header.stamp} \
@@ -124,12 +116,12 @@ class VoNode(Node):
         # numpy array!
 
         # Perform gamma correction on the left image before detecting keypoints.        
-        left_image = cv2.LUT(left_image, self.lookUpTable)
+        # left_image = cv2.LUT(left_image, self.lookUpTable)
 
         # Perform bilateral filtering on the depth image.
-        depth_image = cv2.convertScaleAbs(depth_image)
-        depth_image = cv2.bilateralFilter(depth_image,9,25,25)
-        self._filtered_depth_pub.publish(self.br.cv2_to_imgmsg(depth_image))
+        # depth_image = cv2.convertScaleAbs(depth_image)
+        # depth_image = cv2.bilateralFilter(depth_image,9,25,25)
+        # self._filtered_depth_pub.publish(self.br.cv2_to_imgmsg(depth_image)
 
         # 2. Extract ORB features from the left image. Starting from
         #    https://docs.opencv.org/4.x/d1/d89/tutorial_py_orb.html
@@ -228,14 +220,98 @@ class VoNode(Node):
             self._last_keypoints = keypoints
             self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
+
+            # TODO: Publish initial transformation here. 
+
+            # ACTUALLY: Maybe this node should instead publish the transform
+            # from C0-->CN, where CN is just the current timestep camera frame.
+
+            # THEN, we would just define a static transform between the
+            # odom frame and C0.
+
+
+
+            # from odom to optical: 90 degree roll, -90 pitch?
+
+            
+            # While I don't want to get too caught up on this, what would this
+            # really be publishing in practice?
+
+            # In practice, an odometry source would be publishing "an odometry
+            # estimate message" == what it thinks the pose + twist of the robot
+            # is at each timestep. Then, you might combine the odometry
+            # estimates of multiple odometry sources into a single optimization
+            # problem to come up with a fused motion estimate (that reconciles
+            # the error between them all).
+
+            # In this way, we would not be publishing the transform between each
+            # camera frame, or even the camera frame at each step. Instead, more
+            # likely, I think we would be computing the transformation between
+            # each base link frame--I.e., the frame this is rigidly attached to.
+            # Then, we can publish the odometry of the base link rather than
+            # just the camera frame.
+
+            # The only wrinkle/caveat with this is dealing with the twist part
+            # (==the linear and angular velocity estimate). The
+            # position+orientation is trivial--as we just use the static
+            # transform between the base link and the camera frame. This is
+            # fine. What's NOT trivial is how to resolve/interpret the camera
+            # frame's linear and angular velocity and compute from that the
+            # velocity of the base link frame. This might literally just be the
+            # kinematic transport theorem, but I need to read up on this.
+
+
+            # In any case, a parameter of this node would be which frame we
+            # would want to publish the odometry of. Then, this node would look
+            # up a static transform between the base_link and the sensor frame
+            # (camera_link in this case). We would compute the relative
+            # transform between the two camera frames as usual. Then, compute
+            # the camera_link pose w.r.t. the odom frame, and then use the
+            # static transform between base link and camera link to compute
+            # where the base link must be?
+
+            # Maybe for now, 
+
+
+            # We get the base_link pose in the odom frame == which is also just
+            # the SE(3) transformation from the base_link frame to the odom
+            # frame (because the translation vector is always in the destination
+            # frame). Can take this and compute what the current camera_link to
+            # odom frame transformation is by composing that base_link->odom
+            # transformation with the camera_link-->base_link transformation.
+            # This gives us camera_link to odom. We the compute the relative
+            # transform from camera_link at time k-1 to camera_link at time k
+            # (what pnp gives us). We can then find the transform from
+            # camera_link to odom by composing the camera_link at time k to odom
+            # with camera_link k-1 to k to get camera_link k to odom == new
+            # camera pose in odom frame. Can then extract the new base link to
+            # odom transform by composing camera_link_k to odom with base link
+            # to camera_link_k (a static tf). This gives us the transform from
+            # base_link to odom, which is == the base link's pose in the odom
+            # frame. NEED TO VERIFY THE DETAILS. This logic should all be
+            # isolated from the core VO functionalityi, though.
+
+
+
+
+
             # At first timestep, transformation to first this camera's frame is just identity.
             # self._last_tf = np.eye(4,4)
             # self.publish_camera_transform(child_frame=left_image_msg.header.frame_id,
             #                           parent_frame="odom",
             #                           transform=self._last_tf)
-            self.R = np.eye(3,3)
+            # self.R = np.eye(3,3)
             self.t = np.zeros((3,1), dtype=float)
-            self.frame_counter += 1
+
+            # For now, just hardcode the initial orientation between the
+            # camera_link at timestep 0 and the odom frame.
+            self.R = euler.euler2mat(np.deg2rad(90), np.deg2rad(-90), 0)
+            # Publish a transformation with these.
+            self.publish_camera_transform(child_frame=left_image_msg.header.frame_id,
+                                          parent_frame="odom",
+                                          rotation=self.R,
+                                          translation=self.t)
+
             return
         
         # OTHERWISE, do feature matching between the last image's features and
@@ -317,18 +393,17 @@ class VoNode(Node):
                                                             left_camera_intrinsics,
                                                             left_camera_distortion)
         except Exception as exc:
-            print(exc)
-            self.frame_counter += 1
+            self.get_logger().warn(f"solvePnPRansac failed with exception:\n{exc}")
             return
         
         # TODO: REMOVE DEBUGGING LINES BELOW.
         tvecs = tvecs / 1000 # Convert to meters from mm -- scaling down even more so I can see the progression in RVIZ.
         # tvecs[2] = 0
         print(f"Tvecs: {tvecs}")
-        if np.linalg.norm(tvecs) > 10:
-            self.get_logger().warn(f"Warning: Translation growing rapidly! T vector is {tvecs}")
-            self.frame_counter += 1
-            return
+        print(f"ret: {ret}")
+        # if np.linalg.norm(tvecs) > 1:
+        #     self.get_logger().warn(f"Warning: Translation growing rapidly! T vector is {tvecs}")
+        #     return
 
         
         if (ret):
@@ -336,9 +411,11 @@ class VoNode(Node):
             # convert this back to a rotation matrix.
             # https://docs.opencv.org/3.4/d9/d0c/group__calib3d.html#ga61585db663d9da06b68e70cfbf6a1eac
             R = cv2.Rodrigues(rvecs)[0]
+            # R == Transform FROM k-1 to k. Need to transpose this to get k to k-1!!!!
+            # self.R == Transform from k-1 to odom.
 
-            self.R = self.R @ R
-            self.t = self.t + R @ tvecs
+            self.R = self.R @ R.T
+            self.t = self.t + self.R @ tvecs
 
             self.get_logger().info(f"New position: {self.t}")
 
@@ -364,7 +441,7 @@ class VoNode(Node):
             
             self.publish_camera_transform(child_frame="camera_link",
                                         parent_frame="odom",
-                                        rotation=None,
+                                        rotation=self.R,
                                         translation=self.t)
             
 
@@ -375,15 +452,13 @@ class VoNode(Node):
             self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
 
-        self.frame_counter += 1
-
     # https://answers.ros.org/question/393979/projecting-3d-points-into-pixel-using-image_geometrypinholecameramodel/
     def left_camera_info_callback(self, left_camera_info_msg):
 
-        if self._need_info:
+        if not self._received_intrinsics:
             self.get_logger().info("Ingesting new camera info message!")
             self._left_camera_model.fromCameraInfo(left_camera_info_msg)
-            self._need_info = False
+            self._received_intrinsics = True
 
     def publish_camera_transform(self, child_frame, parent_frame, rotation, translation):
 
@@ -400,11 +475,49 @@ class VoNode(Node):
         t.header.frame_id = parent_frame
         t.child_frame_id = child_frame
 
+        # TODO: Wait a minute--I think there's a problem here with the code I
+        # had here for the rotation. I think I grabbed this from one of the ROS
+        # tutorials, but didn't update it for the rotations--I was only only
+        # grabbing a single angle?? Not sure yet. Maybe that's not related to
+        # the issue. But definitely go back through this and make sure what
+        # we're doing is reasonable. Probably have to go from rotation matrix to
+        # quaternion (although, these both represent SO(3) rotations no?).
+
         # Turtle only exists in 2D, thus we get x and y translation
         # coordinates from the message and set the z coordinate to 0
-        t.transform.translation.x = translation[0,0]
-        t.transform.translation.y = translation[1,0]
-        t.transform.translation.z = translation[2,0]
+        # t.transform.translation.x = translation[0,0]
+        # t.transform.translation.y = translation[1,0]
+        # t.transform.translation.z = translation[2,0]
+
+        # TODO: Convert SO(3) rotation matrix to a quaternion.
+        # NOTE: self.R is going to be the rotation FROM the camera_link to the
+        # odom frame (I think). I think we are publishing the opposite of this,
+        # right? I.e., odom --> camera_link? Therefore, take the tranpose of
+        # self.R to get the rotation from odom to base link.
+        odom_to_cam_link_q = quaternions.mat2quat(self.R.T)
+        # Likewise, if we're publishing the transform from odom to camera_link,
+        # then the translation vector needs to be expressed in the destination
+        # frame == the camera_link. Therefore, use self.R.T to resolve the odom
+        # frame translation that we have (self.t) into the camera_link frame and
+        # then negate it. This gives us the translation vector to the odom frame
+        # from the perspective of the camera link frame. See
+        # https://motion.cs.illinois.edu/RoboticSystems/CoordinateTransformations.html
+        # for reference on how to intuitively invert SE(3) transformations.
+        odom_link_from_cam_link_t = -(self.R.T @ self.t)
+        
+        # NOTE: The translation vector is a 3x1 numpy vector/array.
+        t.transform.translation.x = odom_link_from_cam_link_t[0,0]
+        t.transform.translation.y = odom_link_from_cam_link_t[1,0]
+        t.transform.translation.z = odom_link_from_cam_link_t[2,0]
+
+        # NOTE: For transforms3d, the w term is at the zero index:
+        # https://matthew-brett.github.io/transforms3d/reference/transforms3d.quaternions.html
+        t.transform.rotation.w = odom_to_cam_link_q[0]
+        t.transform.rotation.x = odom_to_cam_link_q[1]
+        t.transform.rotation.y = odom_to_cam_link_q[2]
+        t.transform.rotation.z = odom_to_cam_link_q[3]
+
+        
 
         # For the same reason, turtle can only rotate around one axis
         # and this why we set rotation in x and y to 0 and obtain
@@ -419,15 +532,15 @@ class VoNode(Node):
         # Send the transformation
         self.tf_broadcaster.sendTransform(t)
 
-        # Create odometry message.
-        odom_msg = Odometry()
-        odom_msg.header.stamp = t.header.stamp
-        odom_msg.header.frame_id = parent_frame
-        odom_msg.pose.pose.position.x = translation[0,0]
-        odom_msg.pose.pose.position.y = translation[1,0]
-        odom_msg.pose.pose.position.z = translation[2,0]
+        # # Create odometry message.
+        # odom_msg = Odometry()
+        # odom_msg.header.stamp = t.header.stamp
+        # odom_msg.header.frame_id = parent_frame
+        # odom_msg.pose.pose.position.x = translation[0,0]
+        # odom_msg.pose.pose.position.y = translation[1,0]
+        # odom_msg.pose.pose.position.z = translation[2,0]
 
-        self._odom_publisher.publish(odom_msg)
+        # self._odom_publisher.publish(odom_msg)
 
 
     # 1. Create subscriber for left stereo image (as it corresponds with depth
