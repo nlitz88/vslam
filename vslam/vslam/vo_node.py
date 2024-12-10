@@ -13,6 +13,7 @@ from transforms3d import quaternions, euler
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import Image, CameraInfo
+from std_msgs.msg import UInt32, Int32
 
 
 # From Google
@@ -28,17 +29,24 @@ def draw_keypoints_with_text(image, keypoints, positions):
 
     return image
 
-
+# TODO: If we have time, turn this pipeline into a separate class that
+# this ROS node class just calls into.
 class VoNode(Node):
 
     def __init__(self):
         super().__init__('vo_node')
+
+        # Declare any VO parameters.
+        
+        self.declare_parameter("orb_max_features", 1000)
 
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "/keypoints", 10)
         self._matched_points_image_pub = self.create_publisher(Image, "/matches", 10)
         self._odom_publisher = self.create_publisher(Odometry, "camera_odom", 10)
         self._filtered_depth_pub = self.create_publisher(Image, "filtered_depth", 10)
+        self._inlier_count_pub = self.create_publisher(UInt32, "inlier_count", 10)
+        self._correspondence_count_pub = self.create_publisher(UInt32, "correspondence_count", 10)
 
         # Initialize the transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -67,7 +75,7 @@ class VoNode(Node):
         self.br = CvBridge()
 
         # Initiate ORB detector
-        self.orb = cv2.ORB_create()
+        self.orb = cv2.ORB_create(nfeatures=self.get_parameter("orb_max_features").value)
         # Create feature matcher.
         # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
@@ -398,9 +406,26 @@ class VoNode(Node):
         
         # TODO: REMOVE DEBUGGING LINES BELOW.
         tvecs = tvecs / 1000 # Convert to meters from mm -- scaling down even more so I can see the progression in RVIZ.
+        euler_angles = euler.mat2euler(cv2.Rodrigues(rvecs)[0])
+        euler_angles_deg = [np.rad2deg(angle_rad) for angle_rad in euler_angles]
+
+        self.get_logger().debug(f"\n\
+                                  PnP Translation (x, y, z) : \n{tvecs}\n \
+                                  PnP Rotation (r, p, y)    : \n{euler_angles_deg}\n \
+                                  Number of point 3D-2D correspondences: {len(current_frame_feature_2d_points)}\n \
+                                  Number of inlier correspondences     : {len(inliers)}\n \
+                                  PnP Return status: {ret}")
+        
+        # Publish debugging transforms.
+
+        # test_msg = UInt32()
+        self._inlier_count_pub.publish(UInt32(data=len(inliers)))
+        self._correspondence_count_pub.publish(UInt32(data=len(current_frame_feature_2d_points)))
+
         # tvecs[2] = 0
-        print(f"Tvecs: {tvecs}")
-        print(f"ret: {ret}")
+        # print(f"Translation: {tvecs}")
+        # print(f"")
+        # print(f"ret: {ret}")
         # if np.linalg.norm(tvecs) > 1:
         #     self.get_logger().warn(f"Warning: Translation growing rapidly! T vector is {tvecs}")
         #     return

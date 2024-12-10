@@ -1,0 +1,3 @@
+vo_node:
+  ros__parameters:
+    orb_max_features: 1000
