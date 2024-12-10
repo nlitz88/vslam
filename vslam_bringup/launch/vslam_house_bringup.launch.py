@@ -17,6 +17,12 @@ def generate_launch_description():
         "vo_debugging.rviz",
     )
 
+    vo_params = os.path.join(
+        ament_index_python.packages.get_package_share_directory("vslam_bringup"),
+        "config",
+        "vo_params.yaml",
+    )
+
     return launch.LaunchDescription([
         launch_ros.actions.Node(
             package='vslam',
@@ -24,7 +30,9 @@ def generate_launch_description():
             name='vo_node',
             remappings=[('left_image', 'camera/infra1/image_rect_raw'),
                         ('depth_image', 'camera/depth/image_rect_raw'),
-                        ('camera_info', 'camera/infra1/camera_info')]
+                        ('camera_info', 'camera/infra1/camera_info')],
+            parameters=[vo_params],
+            # arguments=["--ros-args", "--log-level", "debug"]
         ),
         # TODO: Bring up ros2 bag with the provided path. This path
         # should be a required argument to use the launch file. Would also be

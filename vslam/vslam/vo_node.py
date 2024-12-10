@@ -62,7 +62,7 @@ class VoNode(Node):
         # Create subscribers for left infrared camera and corresponding depth
         # image.
         self._left_image_sub = Subscriber(self, Image, "left_image")
-        self._depth_image_sub = Subscriber(self, Image, "depth")
+        self._depth_image_sub = Subscriber(self, Image, "depth_image")
 
         # Using "message_filters" time sync feature to trigger a single callback
         # when both image messages with the same timestamp are received.
