@@ -12,7 +12,7 @@ def generate_launch_description():
     vo_params = LaunchConfiguration("vo_params")
     rqt_feature_matching_perspective = LaunchConfiguration("rqt_feature_matching_perspective")
     vo_debugging_rviz_config = LaunchConfiguration("vo_debugging_rviz_config")
-    
+
     return launch.LaunchDescription([
         DeclareLaunchArgument(
             "log_level",
@@ -42,7 +42,8 @@ def generate_launch_description():
                         ('depth_image', 'camera/depth/image_rect_raw'),
                         ('camera_info', 'camera/infra1/camera_info')],
             parameters=[vo_params],
-            arguments=["--ros-args", "--log-level", log_level]
+            arguments=["--ros-args", "--log-level", log_level],
+            emulate_tty=True
         ),
         # TODO: Bring up ros2 bag with the provided path. This path
         # should be a required argument to use the launch file. Would also be

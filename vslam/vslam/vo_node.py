@@ -1,4 +1,5 @@
 
+from typing import Optional
 import cv2
 import numpy as np
 import rclpy
@@ -29,6 +30,47 @@ def draw_keypoints_with_text(image, keypoints, positions):
 
     return image
 
+# Function to generate a solid green image if the provided flag value is green,
+# and a solid red image if the provided flag value is red. If a flag_name is
+# provided, the text of the flag name will be displayed in the middle of the
+# image in black.
+def flag_to_image(flag: bool,
+                  flag_name: Optional[str]) -> Image:
+    """Generate a solid green or red image based on the provided flag value.
+    
+    Args:
+        flag: A boolean flag value.
+        flag_name: An optional string containing the name of the flag.
+
+    Returns:
+        An OpenCV image converted to a ROS Image message. The image will be red
+        if the flag is False, and green if the flag is True. If a flag name is
+        provided, the text of the flag name will be displayed in the middle of
+        the image in black.
+    """
+
+    # Create a blank image
+    image = np.zeros((480, 640, 3), dtype=np.uint8)
+
+    # Set the color based on the flag value
+    color = (0, 255, 0) if flag else (0, 0, 255)
+    image[:] = color
+
+    # If a flag name is provided, add the text to the image
+    if flag_name:
+        font = cv2.FONT_HERSHEY_SIMPLEX
+        font_scale = 1
+        font_color = (0, 0, 0)
+        thickness = 2
+        text_size = cv2.getTextSize(flag_name, font, font_scale, thickness)[0]
+        text_x = (image.shape[1] - text_size[0]) // 2
+        text_y = (image.shape[0] + text_size[1]) // 2
+        cv2.putText(image, flag_name, (text_x, text_y), font, font_scale, font_color, thickness)
+
+    # Convert the OpenCV image to a ROS Image message
+    return CvBridge().cv2_to_imgmsg(image, encoding="bgr8")
+    
+
 # TODO: If we have time, turn this pipeline into a separate class that
 # this ROS node class just calls into.
 class VoNode(Node):
@@ -47,6 +89,7 @@ class VoNode(Node):
         self._filtered_depth_pub = self.create_publisher(Image, "filtered_depth", 10)
         self._inlier_count_pub = self.create_publisher(UInt32, "inlier_count", 10)
         self._correspondence_count_pub = self.create_publisher(UInt32, "correspondence_count", 10)
+        self._bad_motion_est_pub = self.create_publisher(Image, "bad_motion_est", 10)
 
         # Initialize the transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -140,6 +183,8 @@ class VoNode(Node):
         #    This step will detect interesting keypoints that we will then
         #    generate ORB descriptors from.
         keypoints = self.orb.detect(left_image)
+        # TODO: FILTER KEYPOINTS USING ANMS. See
+        # https://github.com/BAILOOL/ANMS-Codes/blob/master/Python/ssc.py
         # compute the descriptors with ORB
         keypoints, descriptors = self.orb.compute(left_image, keypoints)
 
@@ -404,7 +449,11 @@ class VoNode(Node):
             ret, rvecs, tvecs, inliers = cv2.solvePnPRansac(prev_frame_feature_3d_positions,
                                                             current_frame_feature_2d_points,
                                                             left_camera_intrinsics,
-                                                            left_camera_distortion)
+                                                            left_camera_distortion,
+                                                            useExtrinsicGuess=False,
+                                                            iterationsCount=100,
+                                                            reprojectionError=4,
+                                                            confidence=0.99)
         except Exception as exc:
             self.get_logger().warn(f"solvePnPRansac failed with exception:\n{exc}")
             return
@@ -420,6 +469,45 @@ class VoNode(Node):
                                   Number of point 3D-2D correspondences: {len(current_frame_feature_2d_points)}\n \
                                   Number of inlier correspondences     : {len(inliers)}\n \
                                   PnP Return status: {ret}")
+
+        # FOR NOW: We will identify an erroneous or "bad" motion estimate via
+        # its magnitude. Basically, the rotation and translation between frames
+        # in this dataset should be tiny. Therefore, if the magnitude is large,
+        # then something's wrong.
+        bad_motion_est = False
+        BAD_TRANSLATION_THRESHOLD = 0.4
+        if np.linalg.norm(tvecs) > BAD_TRANSLATION_THRESHOLD:
+            self.get_logger().warn(f"Warning: Translation growing rapidly! T vector is {tvecs}")
+            bad_motion_est = True
+            
+            # NOW, if this is the case, what do we want to analyze?
+
+            # 1. For both the inliers and outliers, create a histogram of the
+            #    depth values. I want to see if the inliers are all valid depth
+            #    values.
+
+
+        # Publish a flag image indicating whether the motion estimate is good or
+        # bad.
+        flag_image = flag_to_image(flag=not bad_motion_est, flag_name="Good Motion Estimate")
+        self._bad_motion_est_pub.publish(flag_image)
+
+        # TODO: Visualize the inliers and outliers.
+        # 1. Draw the inlier keypoints in blue, and the outlier points in red.
+        # 2. Draw the inlier 3D depth alongside the inlier keypoints.
+        # 3. Publish this image to a topic for debugging.
+
+        # TODO: Visualize outlier matches.
+        # 1. Draw the outlier keypoints in red.
+
+        matches_image = cv2.drawMatches(left_image_with_keypoints,
+                                        keypoints,
+                                        self._last_left_frame_with_keypoints,
+                                        self._last_keypoints,
+                                        matches[:20],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
+        self._matched_points_image_pub.publish(matches_image_msg)
+
     
         
         # TODO: Take a look at the depth values associated with the inliers and
