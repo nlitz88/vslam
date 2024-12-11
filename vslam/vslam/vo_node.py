@@ -92,6 +92,8 @@ class VoNode(Node):
         self._correspondence_count_pub = self.create_publisher(UInt32, "correspondence_count", 10)
         self._bad_motion_est_pub = self.create_publisher(Image, "bad_motion_est", 10)
         self._inlier_outlier_image_pub = self.create_publisher(Image, "inlier_outlier_image", 10)
+        self._inlier_depth_histogram_pub = self.create_publisher(Image, "inlier_depth_histogram", 10)
+        self._outlier_depth_histogram_pub = self.create_publisher(Image, "outlier_depth_histogram", 10)
 
         # Initialize the transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -471,6 +473,10 @@ class VoNode(Node):
                                   Number of point 3D-2D correspondences: {len(current_frame_feature_2d_points)}\n \
                                   Number of inlier correspondences     : {len(inliers)}\n \
                                   PnP Return status: {ret}")
+        
+        inliers = inliers.flatten()
+        outlier_mask = np.ones(current_frame_feature_2d_points.shape[0], dtype=bool)
+        outlier_mask[inliers] = False
 
         # FOR NOW: We will identify an erroneous or "bad" motion estimate via
         # its magnitude. Basically, the rotation and translation between frames
@@ -483,10 +489,35 @@ class VoNode(Node):
             bad_motion_est = True
             
             # NOW, if this is the case, what do we want to analyze?
-
             # 1. For both the inliers and outliers, create a histogram of the
             #    depth values. I want to see if the inliers are all valid depth
             #    values.
+            inlier_depths = prev_frame_feature_3d_positions[inliers][:,2]
+            outlier_depths = prev_frame_feature_3d_positions[outlier_mask][:,2]
+
+            # Create a histogram where each bin is 1mm wide.
+            bins = np.arange(0, 5000, 1)
+            inlier_hist, _ = np.histogram(inlier_depths, bins=bins)
+            outlier_hist, _ = np.histogram(outlier_depths, bins=bins)
+
+            # Plot the histograms.
+            import matplotlib.pyplot as plt
+            plt.figure()
+            plt.plot(bins[:-1], inlier_hist, label="Inliers")
+            plt.plot(bins[:-1], outlier_hist, label="Outliers")
+            plt.xlabel("Depth (mm)")
+            plt.ylabel("Frequency")
+            plt.legend()
+            
+            # Create an image from the histogram and publish it. Do not write to
+            # disk though.
+            plt_img = plt.gcf()
+            plt_img.canvas.draw()
+            width, height = plt_img.canvas.get_width_height()
+            plt_img_np = np.frombuffer(plt_img.canvas.tostring_rgb(), dtype=np.uint8).reshape(height, width, 3)
+            plt_img_msg = self.br.cv2_to_imgmsg(plt_img_np, encoding="rgb8")
+            self._inlier_depth_histogram_pub.publish(plt_img_msg)
+
 
 
         # Publish a flag image indicating whether the motion estimate is good or
@@ -502,7 +533,7 @@ class VoNode(Node):
         # Get a numpy array of all the rows of the inliers.
         # self.get_logger().warn(f"Current shape of current_frame_feature_2d_points: {current_frame_feature_2d_points.shape}")
         # self.get_logger().warn(f"Shape of inliers: {inliers.shape}")
-        inliers = inliers.flatten()
+        
         # self.get_logger().warn(f"Inlier list: {inliers}")
 
         # The inlier list is a list of all the row indices from the
@@ -512,14 +543,12 @@ class VoNode(Node):
         inlier_positions = prev_frame_feature_3d_positions[inliers]
         inlier_image = draw_keypoints_with_text(left_image, inlier_keypoints, inlier_positions)
         # Draw the outlier keypoints in red.
-        outlier_mask = np.ones(current_frame_feature_2d_points.shape[0], dtype=bool)
-        outlier_mask[inliers] = False
         outlier_keypoints = current_frame_feature_2d_points[outlier_mask]
         outlier_positions = prev_frame_feature_3d_positions[outlier_mask]
         combined_image = draw_keypoints_with_text(inlier_image, outlier_keypoints, outlier_positions, color=(0, 0, 255))
 
         # Publish the image with inliers and outliers.
-        combined_image_msg = self.br.cv2_to_imgmsg(cvim=combined_image, encoding="rgb8")
+        combined_image_msg = self.br.cv2_to_imgmsg(cvim=combined_image, encoding="bgr8")
         self._inlier_outlier_image_pub.publish(combined_image_msg)
 
 
