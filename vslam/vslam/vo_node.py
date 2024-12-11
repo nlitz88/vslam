@@ -1,8 +1,10 @@
 
+import time
 from typing import Optional
 import cv2
 import numpy as np
 import rclpy
+import matplotlib.pyplot as plt
 
 from rclpy.node import Node
 from cv_bridge import CvBridge
@@ -488,48 +490,49 @@ class VoNode(Node):
             self.get_logger().warn(f"Warning: Translation growing rapidly! T vector is {tvecs}")
             bad_motion_est = True
             
-            # NOW, if this is the case, what do we want to analyze?
-            # 1. For both the inliers and outliers, create a histogram of the
-            #    depth values. I want to see if the inliers are all valid depth
-            #    values.
-            inlier_depths = prev_frame_feature_3d_positions[inliers][:,2]
-            outlier_depths = prev_frame_feature_3d_positions[outlier_mask][:,2]
-
-            # Create a histogram where each bin is 1mm wide.
-            bins = np.arange(0, 5000, 1)
-            inlier_hist, _ = np.histogram(inlier_depths, bins=bins)
-            outlier_hist, _ = np.histogram(outlier_depths, bins=bins)
-
-            # Plot the inlier histogram.
-            import matplotlib.pyplot as plt
-            plt.figure()
-            plt.plot(bins[:-1], inlier_hist, label="Inliers")
-            plt.xlabel("Depth (mm)")
-            plt.ylabel("Frequency")
-            plt.legend()
             
-            # Create an image from the inlier histogram and publish it. Do not write to disk though.
-            plt_img = plt.gcf()
-            plt_img.canvas.draw()
-            width, height = plt_img.canvas.get_width_height()
-            plt_img_np = np.frombuffer(plt_img.canvas.tostring_rgb(), dtype=np.uint8).reshape(height, width, 3)
-            plt_img_msg = self.br.cv2_to_imgmsg(plt_img_np, encoding="rgb8")
-            self._inlier_depth_histogram_pub.publish(plt_img_msg)
+        # NOW, if this is the case, what do we want to analyze?
+        # 1. For both the inliers and outliers, create a histogram of the
+        #    depth values. I want to see if the inliers are all valid depth
+        #    values.
+        inlier_depths = prev_frame_feature_3d_positions[inliers][:,2]
+        outlier_depths = prev_frame_feature_3d_positions[outlier_mask][:,2]
+        # Create a histogram where each bin is 1mm wide.
+        bins = np.arange(0, 5000, 10)
+        inlier_hist, _ = np.histogram(inlier_depths, bins=bins)
+        outlier_hist, _ = np.histogram(outlier_depths, bins=bins)
 
-            # Plot the outlier histogram.
-            plt.figure()
-            plt.plot(bins[:-1], outlier_hist, label="Outliers")
-            plt.xlabel("Depth (mm)")
-            plt.ylabel("Frequency")
-            plt.legend()
-            
-            # Create an image from the outlier histogram and publish it. Do not write to disk though.
-            plt_img = plt.gcf()
-            plt_img.canvas.draw()
-            width, height = plt_img.canvas.get_width_height()
-            plt_img_np = np.frombuffer(plt_img.canvas.tostring_rgb(), dtype=np.uint8).reshape(height, width, 3)
-            plt_img_msg = self.br.cv2_to_imgmsg(plt_img_np, encoding="rgb8")
-            self._outlier_depth_histogram_pub.publish(plt_img_msg)
+        start = time.perf_counter()
+        # Plot the inlier histogram.
+        fig, ax = plt.subplots()
+        ax.plot(bins[:-1], inlier_hist, label="Inliers")
+        ax.set_xlabel("Depth (mm)")
+        ax.set_ylabel("Frequency")
+        ax.legend()
+
+        # Create an image from the inlier histogram and publish it.
+        fig.canvas.draw()
+        plt_img_np = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        plt_img_msg = self.br.cv2_to_imgmsg(plt_img_np, encoding="rgb8")
+        self._inlier_depth_histogram_pub.publish(plt_img_msg)
+        plt.close(fig)
+
+        # Plot the outlier histogram.
+        fig, ax = plt.subplots()
+        ax.plot(bins[:-1], outlier_hist, label="Outliers")
+        ax.set_xlabel("Depth (mm)")
+        ax.set_ylabel("Frequency")
+        ax.legend()
+
+        # Create an image from the outlier histogram and publish it.
+        fig.canvas.draw()
+        plt_img_np = np.frombuffer(fig.canvas.tostring_rgb(), dtype=np.uint8).reshape(fig.canvas.get_width_height()[::-1] + (3,))
+        plt_img_msg = self.br.cv2_to_imgmsg(plt_img_np, encoding="rgb8")
+        self._outlier_depth_histogram_pub.publish(plt_img_msg)
+        plt.close(fig)
+
+        end = time.perf_counter()
+        self.get_logger().warn(f"Time to plot histograms: {end-start}")
 
 
 
