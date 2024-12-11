@@ -1,38 +1,38 @@
 import os
 import launch
 import launch_ros.actions
-import ament_index_python
 
+from ament_index_python.packages import get_package_share_directory
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 
 def generate_launch_description():
 
     log_level = LaunchConfiguration("log_level")
-
-    rqt_feature_matching_perspective = os.path.join(
-        ament_index_python.packages.get_package_share_directory("vslam_bringup"),
-        "config",
-        "feature-detection-matching.perspective",
-    )
-
-    vo_debugging_rviz_config = os.path.join(
-        ament_index_python.packages.get_package_share_directory("vslam_bringup"),
-        "config",
-        "vo_debugging.rviz",
-    )
-
-    vo_params = os.path.join(
-        ament_index_python.packages.get_package_share_directory("vslam_bringup"),
-        "config",
-        "vo_params.yaml",
-    )
-
+    vo_params = LaunchConfiguration("vo_params")
+    rqt_feature_matching_perspective = LaunchConfiguration("rqt_feature_matching_perspective")
+    vo_debugging_rviz_config = LaunchConfiguration("vo_debugging_rviz_config")
+    
     return launch.LaunchDescription([
         DeclareLaunchArgument(
             "log_level",
             default_value="info",
             description="The ROS logging level to use."
+        ),
+        DeclareLaunchArgument(
+            "vo_params",
+            default_value=os.path.join(get_package_share_directory("vslam_bringup"), "config", "vo_params.yaml"),
+            description="The path to the VO parameters file."
+        ),
+        DeclareLaunchArgument(
+            "rqt_feature_matching_perspective",
+            default_value=os.path.join(get_package_share_directory("vslam_bringup"), "config", "feature-detection-matching.perspective"),
+            description="The path to the RQT perspective file for feature detection and matching."
+        ),
+        DeclareLaunchArgument(
+            "vo_debugging_rviz_config",
+            default_value=os.path.join(get_package_share_directory("vslam_bringup"), "config", "vo_debugging.rviz"),
+            description="The path to the RVIZ configuration file for VO debugging."
         ),
         launch_ros.actions.Node(
             package='vslam',
