@@ -18,15 +18,16 @@ from std_msgs.msg import UInt32, Int32
 
 
 # From Google
-def draw_keypoints_with_text(image, keypoints, positions):
+def draw_keypoints_with_text(image, keypoints, positions, color=(0, 255, 0)):
     # Draw keypoints
     for i, keypoint in enumerate(keypoints):
-        x, y = int(keypoint.pt[0]), int(keypoint.pt[1])
-        cv2.circle(image, (x, y), 4, (0, 255, 0), -1)
+        
+        x, y = int(keypoint[0]), int(keypoint[1])
+        cv2.circle(image, (x, y), 4, color, -1)
 
         # Add text label
-        text = str(f"[{positions[i][0]:.2f}, {positions[i][1]:.2f}, {positions[i][2]:.2f}]")
-        cv2.putText(image, text, (x + 5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 2)
+        text = str(f"{positions[i][2]:.2f}")
+        cv2.putText(image, text, (x + 5, y), cv2.FONT_HERSHEY_SIMPLEX, 0.4, color, 2)
 
     return image
 
@@ -90,6 +91,7 @@ class VoNode(Node):
         self._inlier_count_pub = self.create_publisher(UInt32, "inlier_count", 10)
         self._correspondence_count_pub = self.create_publisher(UInt32, "correspondence_count", 10)
         self._bad_motion_est_pub = self.create_publisher(Image, "bad_motion_est", 10)
+        self._inlier_outlier_image_pub = self.create_publisher(Image, "inlier_outlier_image", 10)
 
         # Initialize the transform broadcaster
         self.tf_broadcaster = TransformBroadcaster(self)
@@ -496,17 +498,53 @@ class VoNode(Node):
         # 1. Draw the inlier keypoints in blue, and the outlier points in red.
         # 2. Draw the inlier 3D depth alongside the inlier keypoints.
         # 3. Publish this image to a topic for debugging.
+        
+        # Get a numpy array of all the rows of the inliers.
+        # self.get_logger().warn(f"Current shape of current_frame_feature_2d_points: {current_frame_feature_2d_points.shape}")
+        # self.get_logger().warn(f"Shape of inliers: {inliers.shape}")
+        inliers = inliers.flatten()
+        # self.get_logger().warn(f"Inlier list: {inliers}")
+
+        # The inlier list is a list of all the row indices from the
+        # current_frame_feature_2d_points array that are inliers. Select these
+        # rows.
+        inlier_keypoints = current_frame_feature_2d_points[inliers]
+        inlier_positions = prev_frame_feature_3d_positions[inliers]
+        inlier_image = draw_keypoints_with_text(left_image, inlier_keypoints, inlier_positions)
+        # Draw the outlier keypoints in red.
+        outlier_mask = np.ones(current_frame_feature_2d_points.shape[0], dtype=bool)
+        outlier_mask[inliers] = False
+        outlier_keypoints = current_frame_feature_2d_points[outlier_mask]
+        outlier_positions = prev_frame_feature_3d_positions[outlier_mask]
+        combined_image = draw_keypoints_with_text(inlier_image, outlier_keypoints, outlier_positions, color=(0, 0, 255))
+
+        # Publish the image with inliers and outliers.
+        combined_image_msg = self.br.cv2_to_imgmsg(cvim=combined_image, encoding="rgb8")
+        self._inlier_outlier_image_pub.publish(combined_image_msg)
+
+
+        # inlier_keypoints = current_frame_feature_2d_points[inliers]
+        # inlier_positions = prev_frame_feature_3d_positions[inliers]
+        # self.get_logger().warn(f"Shape of inlier keypoints: {inlier_keypoints.shape}")
+        # self.get_logger().warn(f"Shape of inlier positions: {inlier_positions.shape}")
+        # inlier_image = draw_keypoints_with_text(left_image, inlier_keypoints, inlier_positions)
+        # # Draw the outlier keypoints in red.
+        # outlier_keypoints = current_frame_feature_2d_points[np.logical_not(inliers)]
+        # outlier_positions = prev_frame_feature_3d_positions[np.logical_not(inliers)]
+        # outlier_image = draw_keypoints_with_text(inlier_image, outlier_keypoints, outlier_positions, color=(0, 0, 255))
+
+
 
         # TODO: Visualize outlier matches.
         # 1. Draw the outlier keypoints in red.
 
-        matches_image = cv2.drawMatches(left_image_with_keypoints,
-                                        keypoints,
-                                        self._last_left_frame_with_keypoints,
-                                        self._last_keypoints,
-                                        matches[:20],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-        matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
-        self._matched_points_image_pub.publish(matches_image_msg)
+        # matches_image = cv2.drawMatches(left_image_with_keypoints,
+        #                                 keypoints,
+        #                                 self._last_left_frame_with_keypoints,
+        #                                 self._last_keypoints,
+        #                                 matches[:20],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        # matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
+        # self._matched_points_image_pub.publish(matches_image_msg)
 
     
         
