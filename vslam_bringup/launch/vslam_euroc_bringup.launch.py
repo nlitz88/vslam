@@ -27,6 +27,14 @@ def generate_launch_description():
     # Argument, and would have no way to pass its values to any nodes /
     # other Launch Descriptions.
 
+    # ACTUALLY, updated note on this: If you don't want to define these
+    # variables to refere to these LaunchConfiguration values, you can literally
+    # just use that same syntax to access the LaunchArgument values. I.e., when
+    # passing in parameters, just use
+    # LaunchConfiguration('left_camera_parameters_filepath'), for example! See
+    # this page for more:
+    # https://docs.ros.org/en/humble/Tutorials/Intermediate/Launch/Using-ROS2-Launch-For-Large-Projects.html#setting-parameters-in-the-launch-file
+    
     # Create launch configurations. Declare their corresponding launch arguments
     # within the LaunchDescription.
     vo_node_parameters_filepath = LaunchConfiguration

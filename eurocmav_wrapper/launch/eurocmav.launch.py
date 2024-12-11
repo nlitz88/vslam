@@ -14,23 +14,37 @@ def generate_launch_description():
     vicon_parameters_filepath = LaunchConfiguration('vicon_parameters_filepath')
     eurocmav_rosbag_filepath = LaunchConfiguration('eurocmav_rosbag_filepath')
 
+    # TODO: Update so that we only have to provide the ASL directory path, not
+    # each yaml file within it. This is particularly useful if we want to pick
+    # up the transforms between all the sensors.
+
     return launch.LaunchDescription([
         DeclareLaunchArgument(
             'left_camera_parameters_filepath',
             # default_value=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'config', ''),
             description='Full path to the left camera calibration file as provided in the EuRoC MAV Dataset ASL files.'
         ),
-        DeclareLaunchArgument(
-            'vicon_parameters_filepath',
-            # default_value=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'config', ''),
-            description='Full path to the vicon sensor parameter file from the EuRoC MAV Dataset ASL files.'
-        ),
-        DeclareLaunchArgument(
-            'eurocmav_rosbag_filepath',
-            # default_value=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'config', ''),
-            description='Full path to the EuRoC MAV dataset ROS 2 Bag directory.'
-        ),
+        # DeclareLaunchArgument(
+        #     'vicon_parameters_filepath',
+        #     # default_value=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'config', ''),
+        #     description='Full path to the vicon sensor parameter file from the EuRoC MAV Dataset ASL files.'
+        # ),
+        # DeclareLaunchArgument(
+        #     'eurocmav_rosbag_filepath',
+        #     # default_value=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'config', ''),
+        #     description='Full path to the EuRoC MAV dataset ROS 2 Bag directory.'
+        # ),
         # TODO: Add node that publishes each of the camera parameters.
+        Node(
+            package="eurocmav_wrapper",
+            executable="camera_info_node",
+            name="camera_info_node",
+            namespace="",
+            remappings=[],
+            parameters=[{
+                'camera_parameters_filepath': left_camera_parameters_filepath
+            }]
+        )
         
         # TODO: Bring up the ROS bag and begin playing it.
     ])
