@@ -75,7 +75,11 @@ class VoNode(Node):
         self.br = CvBridge()
 
         # Initiate ORB detector
-        self.orb = cv2.ORB_create(nfeatures=self.get_parameter("orb_max_features").value)
+        self.orb = cv2.ORB_create(nfeatures=self.get_parameter("orb_max_features").value,
+                                  edgeThreshold=10,
+                                  fastThreshold=10,
+                                  WTA_K=2,
+                                  scoreType=cv2.ORB_HARRIS_SCORE)
         # Create feature matcher.
         # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
         self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
@@ -124,7 +128,7 @@ class VoNode(Node):
         # numpy array!
 
         # Perform gamma correction on the left image before detecting keypoints.        
-        # left_image = cv2.LUT(left_image, self.lookUpTable)
+        left_image = cv2.LUT(left_image, self.lookUpTable)
 
         # Perform bilateral filtering on the depth image.
         # depth_image = cv2.convertScaleAbs(depth_image)
@@ -396,6 +400,7 @@ class VoNode(Node):
         left_camera_distortion = self._left_camera_model.distortionCoeffs()
 
         try:
+            # TODO: Tune PnPRansac parameters!
             ret, rvecs, tvecs, inliers = cv2.solvePnPRansac(prev_frame_feature_3d_positions,
                                                             current_frame_feature_2d_points,
                                                             left_camera_intrinsics,
@@ -415,6 +420,30 @@ class VoNode(Node):
                                   Number of point 3D-2D correspondences: {len(current_frame_feature_2d_points)}\n \
                                   Number of inlier correspondences     : {len(inliers)}\n \
                                   PnP Return status: {ret}")
+    
+        
+        # TODO: Take a look at the depth values associated with the inliers and
+        # outliers! Are there any inliers with completely invalid depth values?
+        # The point of doing this is to figure out what filters to add on the 3D
+        # points that we use. I.e., if the depth is zero, this is not helpful to
+        # us and should not be considered at all. However, if RANSAC is already
+        # not considering these points, then we don't really need to worry about
+        # filtering them?
+
+        # TODO: Also between the problematic frames and the good frames, compare
+        # the 2D characteristics of those features as well!
+        # 
+        # Also take a look at the 2D characteristics of the inliers and
+        # outliers. I.e., are all the inliers concrentraed 
+
+        # The key is figuring out what is happening (what the inliers and
+        # inliers look like) on those frames where the transformation is
+        # MASSIVE!
+
+        # TODO: Also look at the outlier correspondences (visually). What can we
+        # observe?
+        
+        # TODO: Also, it might be nice to look at 
         
         # Publish debugging transforms.
 
