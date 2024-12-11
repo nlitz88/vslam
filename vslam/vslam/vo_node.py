@@ -500,23 +500,36 @@ class VoNode(Node):
             inlier_hist, _ = np.histogram(inlier_depths, bins=bins)
             outlier_hist, _ = np.histogram(outlier_depths, bins=bins)
 
-            # Plot the histograms.
+            # Plot the inlier histogram.
             import matplotlib.pyplot as plt
             plt.figure()
             plt.plot(bins[:-1], inlier_hist, label="Inliers")
-            plt.plot(bins[:-1], outlier_hist, label="Outliers")
             plt.xlabel("Depth (mm)")
             plt.ylabel("Frequency")
             plt.legend()
             
-            # Create an image from the histogram and publish it. Do not write to
-            # disk though.
+            # Create an image from the inlier histogram and publish it. Do not write to disk though.
             plt_img = plt.gcf()
             plt_img.canvas.draw()
             width, height = plt_img.canvas.get_width_height()
             plt_img_np = np.frombuffer(plt_img.canvas.tostring_rgb(), dtype=np.uint8).reshape(height, width, 3)
             plt_img_msg = self.br.cv2_to_imgmsg(plt_img_np, encoding="rgb8")
             self._inlier_depth_histogram_pub.publish(plt_img_msg)
+
+            # Plot the outlier histogram.
+            plt.figure()
+            plt.plot(bins[:-1], outlier_hist, label="Outliers")
+            plt.xlabel("Depth (mm)")
+            plt.ylabel("Frequency")
+            plt.legend()
+            
+            # Create an image from the outlier histogram and publish it. Do not write to disk though.
+            plt_img = plt.gcf()
+            plt_img.canvas.draw()
+            width, height = plt_img.canvas.get_width_height()
+            plt_img_np = np.frombuffer(plt_img.canvas.tostring_rgb(), dtype=np.uint8).reshape(height, width, 3)
+            plt_img_msg = self.br.cv2_to_imgmsg(plt_img_np, encoding="rgb8")
+            self._outlier_depth_histogram_pub.publish(plt_img_msg)
 
 
 
