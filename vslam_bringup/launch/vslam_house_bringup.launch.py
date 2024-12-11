@@ -3,7 +3,12 @@ import launch
 import launch_ros.actions
 import ament_index_python
 
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+
 def generate_launch_description():
+
+    log_level = LaunchConfiguration("log_level")
 
     rqt_feature_matching_perspective = os.path.join(
         ament_index_python.packages.get_package_share_directory("vslam_bringup"),
@@ -24,6 +29,11 @@ def generate_launch_description():
     )
 
     return launch.LaunchDescription([
+        DeclareLaunchArgument(
+            "log_level",
+            default_value="info",
+            description="The ROS logging level to use."
+        ),
         launch_ros.actions.Node(
             package='vslam',
             executable='vo_node',
@@ -32,7 +42,7 @@ def generate_launch_description():
                         ('depth_image', 'camera/depth/image_rect_raw'),
                         ('camera_info', 'camera/infra1/camera_info')],
             parameters=[vo_params],
-            # arguments=["--ros-args", "--log-level", "debug"]
+            arguments=["--ros-args", "--log-level", log_level]
         ),
         # TODO: Bring up ros2 bag with the provided path. This path
         # should be a required argument to use the launch file. Would also be
