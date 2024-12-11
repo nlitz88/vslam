@@ -29,10 +29,17 @@ def generate_launch_description():
 
     # Create launch configurations. Declare their corresponding launch arguments
     # within the LaunchDescription.
+    vo_node_parameters_filepath = LaunchConfiguration
     left_camera_parameters_filepath = LaunchConfiguration('left_camera_parameters_filepath'),
     vicon_parameters_filepath = LaunchConfiguration('vicon_parameters_filepath')
+    eurocmav_rosbag_filepath = LaunchConfiguration('eurocmav_rosbag_filepath')
 
     return launch.LaunchDescription([
+        DeclareLaunchArgument(
+            'vo_node_parameters_filepath',
+            default_value=os.path.join(get_package_share_directory('vslam_bringup'), 'config', 'vo_params.yaml'),
+            description='Path to parameter file for configuring the visual odometry pipeline.'
+        ),
         DeclareLaunchArgument(
             'left_camera_parameters_filepath',
             # default_value=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'config', ''),
@@ -43,17 +50,27 @@ def generate_launch_description():
             # default_value=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'config', ''),
             description='Full path to the vicon sensor parameter file from the EuRoC MAV Dataset ASL files.'
         ),
+        DeclareLaunchArgument(
+            'eurocmav_rosbag_filepath',
+            # default_value=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'config', ''),
+            description='Full path to the EuRoC MAV dataset ROS 2 Bag directory.'
+        ),
         Node(
             package='vslam',
             executable='vo_node',
-            name='vo_node'
+            name='vo_node',
+            remappings=[('left_image', 'camera/infra1/image_rect_raw'),
+                        ('depth_image', 'camera/depth/image_rect_raw'),
+                        ('camera_info', 'camera/infra1/camera_info')],
+            parameters=[vo_node_parameters_filepath],
+            # arguments=["--ros-args", "--log-level", "debug"]
         ),
         # TODO: Either launch a custom stereo node to compute the disparity or
         # use the stereo_image_proc system.
-        Node(
-            package='vslam',
-            executable='stereo_node',
-            name='stereo_node'),
+        # Node(
+        #     package='vslam',
+        #     executable='stereo_node',
+        #     name='stereo_node'),
         # Include the launch file from the eurocmav wrapper package. Reference
         # for doing all this below. Note that (for consistency) I opted to not
         # use their PythonLaunchDescriptionSource and instead just provided a
@@ -63,7 +80,8 @@ def generate_launch_description():
             launch_description_source=os.path.join(get_package_share_directory('eurocmav_wrapper'), 'launch', 'eurocmav.launch.py'),
             launch_arguments=[
                 ('left_camera_parameters_filepath', left_camera_parameters_filepath),
-                ('vicon_parameters_filepath', vicon_parameters_filepath)
+                ('vicon_parameters_filepath', vicon_parameters_filepath),
+                ('eurocmav_rosbag_filepath', eurocmav_rosbag_filepath)
             ]
         )
     ])
