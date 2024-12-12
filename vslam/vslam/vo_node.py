@@ -126,15 +126,19 @@ class VoNode(Node):
         # Reference: https://automaticaddison.com/getting-started-with-opencv-in-ros-2-foxy-fitzroy-python/
         self.br = CvBridge()
 
-        # Initiate ORB detector
-        self.orb = cv2.ORB_create(nfeatures=self.get_parameter("orb_max_features").value,
-                                  edgeThreshold=10,
-                                  fastThreshold=10,
-                                  WTA_K=2,
-                                  scoreType=cv2.ORB_HARRIS_SCORE)
-        # Create feature matcher.
-        # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        # # Initiate ORB detector
+        # self.orb = cv2.ORB_create(nfeatures=self.get_parameter("orb_max_features").value,
+        #                           edgeThreshold=10,
+        #                           fastThreshold=10,
+        #                           WTA_K=2,
+        #                           scoreType=cv2.ORB_HARRIS_SCORE)
+        # # Create feature matcher.
+        # # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
+        # self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+
+        # Initiate SIFT detector
+        self.sift = cv2.SIFT_create()
+        self.matcher = cv2.BFMatcher()
 
         # Store previous frame's images, features, and feature positions.
         self._last_left_frame = None
@@ -187,13 +191,16 @@ class VoNode(Node):
         # depth_image = cv2.bilateralFilter(depth_image,9,25,25)
         # self._filtered_depth_pub.publish(self.br.cv2_to_imgmsg(depth_image)
 
-        # 2. Extract ORB features from the left image. Starting from
-        #    https://docs.opencv.org/4.x/d1/d89/tutorial_py_orb.html
-        #    This step will detect interesting keypoints that we will then
-        #    generate ORB descriptors from.
-        keypoints = self.orb.detect(left_image) 
-        # compute the descriptors with ORB
-        keypoints, descriptors = self.orb.compute(left_image, keypoints)
+        # # 2. Extract ORB features from the left image. Starting from
+        # #    https://docs.opencv.org/4.x/d1/d89/tutorial_py_orb.html
+        # #    This step will detect interesting keypoints that we will then
+        # #    generate ORB descriptors from.
+        # keypoints = self.orb.detect(left_image) 
+        # # compute the descriptors with ORB
+        # keypoints, descriptors = self.orb.compute(left_image, keypoints)
+
+        # 2. Extract SIFT features from the left image.
+        keypoints, descriptors = self.sift.detectAndCompute(left_image, None)
 
         # TODO: FILTER KEYPOINTS USING ANMS. See
         # https://github.com/BAILOOL/ANMS-Codes/blob/master/Python/ssc.py
@@ -390,8 +397,17 @@ class VoNode(Node):
         # NOTE: The first parameter == the QUERY descriptors, which are compared
         # against the TRAIN descriptors == second argument.
         matches = self.matcher.match(descriptors, self._last_descriptors)
+        # matches = self.matcher.knnMatch(descriptors, self._last_descriptors, k=2)
         # Sort them in the order of their distance.
-        matches = sorted(matches, key = lambda x:x.distance)
+        # matches = sorted(matches, key = lambda x:x.distance)
+
+        # # Apply ratio test
+        # good = []
+        # for m,n in matches:
+        #     if m.distance < 0.75*n.distance:
+        #         good.append([m])
+
+        # matches=good
 
         # Draw first 10 matches.
         matches_image = cv2.drawMatches(left_image_with_keypoints,
