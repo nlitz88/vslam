@@ -18,6 +18,8 @@ from geometry_msgs.msg import TransformStamped
 from sensor_msgs.msg import Image, CameraInfo
 from std_msgs.msg import UInt32, Int32
 
+from vslam.ssc import ssc
+
 
 # From Google
 def draw_keypoints_with_text(image, keypoints, positions, color=(0, 255, 0)):
@@ -87,6 +89,7 @@ class VoNode(Node):
 
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "keypoints", 10)
+        self._keypoints_with_depth_image_pub = self.create_publisher(Image, "keypoints_with_depth", 10)
         self._matched_points_image_pub = self.create_publisher(Image, "matches", 10)
         self._odom_publisher = self.create_publisher(Odometry, "camera_odom", 10)
         self._filtered_depth_pub = self.create_publisher(Image, "filtered_depth", 10)
@@ -188,11 +191,16 @@ class VoNode(Node):
         #    https://docs.opencv.org/4.x/d1/d89/tutorial_py_orb.html
         #    This step will detect interesting keypoints that we will then
         #    generate ORB descriptors from.
-        keypoints = self.orb.detect(left_image)
-        # TODO: FILTER KEYPOINTS USING ANMS. See
-        # https://github.com/BAILOOL/ANMS-Codes/blob/master/Python/ssc.py
+        keypoints = self.orb.detect(left_image) 
         # compute the descriptors with ORB
         keypoints, descriptors = self.orb.compute(left_image, keypoints)
+
+        # TODO: FILTER KEYPOINTS USING ANMS. See
+        # https://github.com/BAILOOL/ANMS-Codes/blob/master/Python/ssc.py
+        # FIRST: SORT KEYPOINTS BY RESPONSE.
+        keypoints = sorted(keypoints, key=lambda x: x.response, reverse=True)
+        keypoints = ssc(keypoints, num_ret_points=100, tolerance=0.1, cols=left_image.shape[1], rows=left_image.shape[0])
+
 
         # DEBUG: Draw keypoints on image and publish.
         # draw only keypoints location,not size and orientation
@@ -263,7 +271,6 @@ class VoNode(Node):
         # Convert the debug image to a ROS image so we can publish it.
         left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
         self._keypoint_image_pub.publish(left_image_keypoints_msg)
-
 
 
         # Publish keypoints with their respective 3D positions in the left
@@ -439,6 +446,13 @@ class VoNode(Node):
         current_frame_feature_2d_points = np.array(current_frame_feature_2d_points)
         prev_frame_feature_3d_positions = np.array(prev_frame_feature_3d_positions)
 
+        self.get_logger().debug(f"Number of matches: {len(matches)}")
+
+        # Publish keypoints with their depth values.
+        left_image_with_depth_keypoints = draw_keypoints_with_text(left_image, current_frame_feature_2d_points, prev_frame_feature_3d_positions, color=(0, 255, 0))
+        left_image_with_depth_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_depth_keypoints, encoding="bgr8")
+        self._keypoints_with_depth_image_pub.publish(left_image_with_depth_keypoints_msg)
+
     
         # Now, with those lists of 2D features locations from the current frame
         # and the 3D positions of those features (expressed in the previous
@@ -458,10 +472,14 @@ class VoNode(Node):
                                                             left_camera_distortion,
                                                             useExtrinsicGuess=False,
                                                             iterationsCount=100,
-                                                            reprojectionError=4,
-                                                            confidence=0.99)
+                                                            reprojectionError=8,
+                                                            confidence=0.90)
         except Exception as exc:
             self.get_logger().warn(f"solvePnPRansac failed with exception:\n{exc}")
+            return
+        
+        if not ret:
+            self.get_logger().warn("solvePnPRansac failed to converge.")
             return
         
         # TODO: REMOVE DEBUGGING LINES BELOW.
@@ -505,7 +523,7 @@ class VoNode(Node):
         start = time.perf_counter()
         # Plot the inlier histogram.
         fig, ax = plt.subplots()
-        ax.plot(bins[:-1], inlier_hist, label="Inliers")
+        ax.hist(inlier_depths, bins=bins, histtype='stepfilled', label="Inliers")
         ax.set_xlabel("Depth (mm)")
         ax.set_ylabel("Frequency")
         ax.legend()
@@ -519,7 +537,7 @@ class VoNode(Node):
 
         # Plot the outlier histogram.
         fig, ax = plt.subplots()
-        ax.plot(bins[:-1], outlier_hist, label="Outliers")
+        ax.hist(outlier_depths, bins=bins, histtype='stepfilled', label="Outliers")
         ax.set_xlabel("Depth (mm)")
         ax.set_ylabel("Frequency")
         ax.legend()
