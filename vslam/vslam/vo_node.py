@@ -134,7 +134,7 @@ class VoNode(Node):
                                   scoreType=cv2.ORB_HARRIS_SCORE)
         # Create feature matcher.
         # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
+        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
 
         # Store previous frame's images, features, and feature positions.
         self._last_left_frame = None
@@ -398,7 +398,7 @@ class VoNode(Node):
                                         keypoints,
                                         self._last_left_frame_with_keypoints,
                                         self._last_keypoints,
-                                        matches,None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+                                        matches[10:],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
         matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
         self._matched_points_image_pub.publish(matches_image_msg)
 
@@ -463,6 +463,13 @@ class VoNode(Node):
         # part of its measurement Jacobian matrix (I think).
         left_camera_intrinsics = self._left_camera_model.fullIntrinsicMatrix() # Gives us K == 3x3 matrix.
         left_camera_distortion = self._left_camera_model.distortionCoeffs()
+        # https://forum.opencv.org/t/problems-with-solvepnpransac/2592/13
+        # Check if the distortion coefficients being provided are all zero. If
+        # so, then we should pass in an empty array instead. Otherwise PNPRANSAC
+        # tries to undistort with those zero values!
+        if np.all(left_camera_distortion == 0):
+            # left_camera_distortion = np.array([])
+            left_camera_distortion = None
 
         try:
             # TODO: Tune PnPRansac parameters!
@@ -473,16 +480,24 @@ class VoNode(Node):
                                                             useExtrinsicGuess=False,
                                                             iterationsCount=100,
                                                             reprojectionError=8,
-                                                            confidence=0.90)
+                                                            confidence=0.70)
         except Exception as exc:
             self.get_logger().warn(f"solvePnPRansac failed with exception:\n{exc}")
             return
         
         if not ret:
-            self.get_logger().warn("solvePnPRansac failed to converge.")
+            self.get_logger().warn(f"solvePnPRansac failed to converge")
+            self._last_left_frame = left_image
+            self._last_left_frame_with_keypoints = left_image_with_keypoints
+            self._last_keypoints = keypoints
+            self._last_descriptors = descriptors
+            self._last_positions = keypoint_3d_positions
             return
         
         # TODO: REMOVE DEBUGGING LINES BELOW.
+        # TODO: INGEST THE CAMERA_INFO FROM THE DEPTH MESSAGE. THIS SHOULD
+        # CONTAIN A DEPTH_SCALE PARAMETER! Will be 1000, but just to
+        # parameterize that between cameras!
         tvecs = tvecs / 1000 # Convert to meters from mm -- scaling down even more so I can see the progression in RVIZ.
         euler_angles = euler.mat2euler(cv2.Rodrigues(rvecs)[0])
         euler_angles_deg = [np.rad2deg(angle_rad) for angle_rad in euler_angles]
