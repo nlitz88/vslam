@@ -394,13 +394,13 @@ class VoNode(Node):
         matches = sorted(matches, key = lambda x:x.distance)
 
         # Draw first 10 matches.
-        # matches_image = cv2.drawMatches(left_image_with_keypoints,
-        #                                 keypoints,
-        #                                 self._last_left_frame_with_keypoints,
-        #                                 self._last_keypoints,
-        #                                 matches[:20],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-        # matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
-        # self._matched_points_image_pub.publish(matches_image_msg)
+        matches_image = cv2.drawMatches(left_image_with_keypoints,
+                                        keypoints,
+                                        self._last_left_frame_with_keypoints,
+                                        self._last_keypoints,
+                                        matches,None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
+        matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
+        self._matched_points_image_pub.publish(matches_image_msg)
 
         # For the matches we find, our goal is to use 3D-2D correspondences and
         # use PNP to recover what the camera's R|t must have been based on where
