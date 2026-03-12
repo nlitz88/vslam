@@ -58,6 +58,7 @@ class VoNode(Node):
         self.declare_parameter("clahe_clip_limit", 2.0)
         self.declare_parameter("clahe_tile_grid_size", 8)
         self.declare_parameter("blur_kernel_size", 5)
+        self.declare_parameter("max_depth_threshold", 10.0)
 
         self._keypoint_image_pub = self.create_publisher(Image, "keypoints", 10)
         self._keypoints_with_depth_image_pub = self.create_publisher(Image, "keypoints_with_depth", 10)
@@ -107,6 +108,7 @@ class VoNode(Node):
         clahe_clip_limit = self.get_parameter("clahe_clip_limit").value
         clahe_tile_grid_size = self.get_parameter("clahe_tile_grid_size").value
         blur_kernel_size = self.get_parameter("blur_kernel_size").value
+        self.max_depth_threshold = self.get_parameter("max_depth_threshold").value
         
         # Create CLAHE object
         self.clahe = cv2.createCLAHE(clipLimit=clahe_clip_limit, tileGridSize=(clahe_tile_grid_size, clahe_tile_grid_size))
@@ -171,10 +173,12 @@ class VoNode(Node):
             Z = depth_image[py, px]
 
             if Z > 0:  
-                keypoint_2d_positions.append(keypoint)
-                X = (px - cx) * Z / fx
-                Y = (py - cy) * Z / fy
-                keypoint_3d_positions.append([X, Y, Z])
+                # Filter out features beyond max depth threshold (convert mm to meters)
+                if Z / 1000.0 <= self.max_depth_threshold:
+                    keypoint_2d_positions.append(keypoint)
+                    X = (px - cx) * Z / fx
+                    Y = (py - cy) * Z / fy
+                    keypoint_3d_positions.append([X, Y, Z])
         
         keypoints = tuple(keypoint_2d_positions)
         keypoint_3d_positions = np.array(keypoint_3d_positions)
@@ -250,10 +254,7 @@ class VoNode(Node):
         # FIX 5b: Safely check for None inliers
         if not ret or inliers is None:
             self.get_logger().warn(f"solvePnPRansac failed to converge or returned 0 inliers.")
-            self._last_left_frame = left_image
-            self._last_left_frame_with_keypoints = left_image_with_keypoints
-            self._last_keypoints = keypoints
-            self._last_positions = keypoint_3d_positions
+            # Don't update the last frame or publish any transforms when no solution is found
             return
         
         tvecs = tvecs / 1000.0
