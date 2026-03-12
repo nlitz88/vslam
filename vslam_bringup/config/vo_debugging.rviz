@@ -11,7 +11,7 @@ Panels:
         - /TF1/Frames1
         - /Odometry1
         - /Odometry1/Shape1
-      Splitter Ratio: 0.5948275923728943
+      Splitter Ratio: 0.5969827771186829
     Tree Height: 696
   - Class: rviz_common/Selection
     Name: Selection
@@ -60,8 +60,6 @@ Visualization Manager:
       Frames:
         All Enabled: false
         camera_infra1_optical_frame:
-          Value: false
-        camera_link:
           Value: true
         odom:
           Value: true
@@ -73,8 +71,6 @@ Visualization Manager:
       Tree:
         odom:
           camera_infra1_optical_frame:
-            {}
-          camera_link:
             {}
       Update Interval: 0
       Value: true
@@ -163,25 +159,25 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 20.071552276611328
+      Distance: 17.420074462890625
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
         Swap Stereo Eyes: false
         Value: false
       Focal Point:
-        X: 0
-        Y: 0
-        Z: 0
-      Focal Shape Fixed Size: false
+        X: -0.022191891446709633
+        Y: -0.2959103286266327
+        Z: -4.522404670715332
+      Focal Shape Fixed Size: true
       Focal Shape Size: 0.05000000074505806
       Invert Z Axis: false
       Name: Current View
       Near Clip Distance: 0.009999999776482582
-      Pitch: 0.5403987765312195
-      Target Frame: <Fixed Frame>
-      Value: Orbit (rviz)
-      Yaw: 5.640426158905029
+      Pitch: 0.6253986954689026
+      Target Frame: camera_infra1_optical_frame
+      Value: Orbit (rviz_default_plugins)
+      Yaw: 0.7572544813156128
     Saved: ~
 Window Geometry:
   Displays:

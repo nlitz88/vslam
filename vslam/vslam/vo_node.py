@@ -35,7 +35,7 @@ class VoNode(Node):
         super().__init__('vo_node')
 
         # Parameters
-        self.declare_parameter("max_features", 1000)
+        self.declare_parameter("max_features", 200)
         self.declare_parameter("quality_level", 0.01)
         self.declare_parameter("min_distance", 10)
         self.declare_parameter("block_size", 3)
@@ -107,17 +107,30 @@ class VoNode(Node):
         current_gray = cv2.cvtColor(current_img, cv2.COLOR_RGB2GRAY)
         depth_img = self.br.imgmsg_to_cv2(depth_msg, "passthrough")
 
-        # --- INITIALIZATION ---
-        if self._last_gray is None:
+        # --- INITIALIZATION OR RECOVERY ---
+        # If we have no points, or the point array is empty, we must detect new ones
+        if self._last_gray is None or self._last_keypoints_2d is None or len(self._last_keypoints_2d) == 0:
             self._last_keypoints_2d, self._last_keypoints_3d = self.extract_features(current_gray, depth_img)
             self._last_gray = current_gray
             return
 
         # --- FEATURE TRACKING (The Fix) ---
         # We track the OLD points into the CURRENT frame
-        next_pts, status, err = cv2.calcOpticalFlowPyrLK(
-            self._last_gray, current_gray, self._last_keypoints_2d, None, **self.lk_params)
+        # Safeguard: Ensure points are float32 and reshaped correctly for OpenCV
+        prev_pts = np.ascontiguousarray(self._last_keypoints_2d).astype(np.float32)
+        try:
+            next_pts, status, err = cv2.calcOpticalFlowPyrLK(
+                self._last_gray, current_gray, prev_pts, None, **self.lk_params)
+        except cv2.error as e:
+            self.get_logger().error(f"Optical Flow Error: {e}")
+            self._last_gray = None # Trigger re-detection on next frame
+            return
         
+        # Double check that we actually have tracked status
+        if status is None:
+            self._last_gray = None
+            return
+
         valid = status.flatten() == 1
         tracked_2d = next_pts[valid]
         tracked_3d_prev = self._last_keypoints_3d[valid]
@@ -141,6 +154,10 @@ class VoNode(Node):
         
         ret, rvec, tvec, inliers = cv2.solvePnPRansac(tracked_3d_prev, tracked_2d, K, dist, 
                                                      reprojectionError=4.0, confidence=0.99)
+        
+        if ret is None:
+            self.get_logger().warn("Ret is none! pnp failed!")
+        # self.get_logger().info(f"PnP: Num inliers: {len(inliers)}")
 
         if ret and inliers is not None:
             # Convert translation to meters (PnP returns units of the 3D points, which were mm)
@@ -153,7 +170,7 @@ class VoNode(Node):
             self.R = self.R @ R_delta.T
 
             self.publish_camera_transform(left_msg.header.frame_id, "odom", self.R, self.t)
-
+            self.get_logger().info("Published transform")
             # --- PREPARE FOR NEXT FRAME ---
             # Re-detect fresh features to keep the track count high
             self._last_keypoints_2d, self._last_keypoints_3d = self.extract_features(current_gray, depth_img)
