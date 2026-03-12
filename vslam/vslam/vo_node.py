@@ -85,7 +85,14 @@ class VoNode(Node):
 
         # Declare any VO parameters.
         
-        self.declare_parameter("orb_max_features", 1000)
+        self.declare_parameter("max_features", 1000)
+        self.declare_parameter("quality_level", 0.01)
+        self.declare_parameter("min_distance", 10)
+        self.declare_parameter("block_size", 3)
+        self.declare_parameter("lk_win_size", 15)
+        self.declare_parameter("lk_max_level", 2)
+        self.declare_parameter("lk_epsilon", 0.03)
+        self.declare_parameter("lk_max_iterations", 10)
 
         # Create publisher for keypoint image.
         self._keypoint_image_pub = self.create_publisher(Image, "keypoints", 10)
@@ -127,15 +134,20 @@ class VoNode(Node):
         self.br = CvBridge()
 
         # Parameters for good features to track
-        self.max_features = self.get_parameter("orb_max_features").value
-        self.quality_level = 0.01
-        self.min_distance = 10
-        self.block_size = 3
+        self.max_features = self.get_parameter("max_features").value
+        self.quality_level = self.get_parameter("quality_level").value
+        self.min_distance = self.get_parameter("min_distance").value
+        self.block_size = self.get_parameter("block_size").value
         
         # Create Lucas-Kanade tracker parameters
-        self.lk_params = dict(winSize=(15, 15),
-                              maxLevel=2,
-                              criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+        lk_win_size = self.get_parameter("lk_win_size").value
+        lk_max_level = self.get_parameter("lk_max_level").value
+        lk_epsilon = self.get_parameter("lk_epsilon").value
+        lk_max_iterations = self.get_parameter("lk_max_iterations").value
+        
+        self.lk_params = dict(winSize=(lk_win_size, lk_win_size),
+                              maxLevel=lk_max_level,
+                              criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, lk_max_iterations, lk_epsilon))
 
         # Store previous frame's images, features, and feature positions.
         self._last_left_frame = None

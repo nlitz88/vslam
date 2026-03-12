@@ -8,8 +8,9 @@ Panels:
         - /Status1
         - /Grid1
         - /TF1
-        - /TF1/Status1
         - /TF1/Frames1
+        - /Odometry1
+        - /Odometry1/Shape1
       Splitter Ratio: 0.5948275923728943
     Tree Height: 696
   - Class: rviz_common/Selection
@@ -53,25 +54,11 @@ Visualization Manager:
       Value: true
     - Class: rviz_default_plugins/TF
       Enabled: true
+      Filter (blacklist): ""
+      Filter (whitelist): ""
       Frame Timeout: 15
       Frames:
         All Enabled: false
-        camera_accel_frame:
-          Value: false
-        camera_accel_optical_frame:
-          Value: false
-        camera_aligned_depth_to_infra1_frame:
-          Value: false
-        camera_depth_frame:
-          Value: false
-        camera_depth_optical_frame:
-          Value: false
-        camera_gyro_frame:
-          Value: false
-        camera_gyro_optical_frame:
-          Value: false
-        camera_infra1_frame:
-          Value: false
         camera_infra1_optical_frame:
           Value: false
         camera_link:
@@ -85,8 +72,50 @@ Visualization Manager:
       Show Names: true
       Tree:
         odom:
-          {}
+          camera_infra1_optical_frame:
+            {}
+          camera_link:
+            {}
       Update Interval: 0
+      Value: true
+    - Angle Tolerance: 0.10000000149011612
+      Class: rviz_default_plugins/Odometry
+      Covariance:
+        Orientation:
+          Alpha: 0.5
+          Color: 255; 255; 127
+          Color Style: Unique
+          Frame: Local
+          Offset: 1
+          Scale: 1
+          Value: true
+        Position:
+          Alpha: 0.30000001192092896
+          Color: 204; 51; 204
+          Scale: 1
+          Value: true
+        Value: true
+      Enabled: true
+      Keep: 100
+      Name: Odometry
+      Position Tolerance: 0.10000000149011612
+      Shape:
+        Alpha: 1
+        Axes Length: 1
+        Axes Radius: 0.10000000149011612
+        Color: 255; 25; 0
+        Head Length: 0.699999988079071
+        Head Radius: 0.5
+        Shaft Length: 10
+        Shaft Radius: 0.5
+        Value: Arrow
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Filter size: 10
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /camera_odom
       Value: true
   Enabled: true
   Global Options:
@@ -134,7 +163,7 @@ Visualization Manager:
   Views:
     Current:
       Class: rviz_default_plugins/Orbit
-      Distance: 8.451708793640137
+      Distance: 20.071552276611328
       Enable Stereo Rendering:
         Stereo Eye Separation: 0.05999999865889549
         Stereo Focal Distance: 1
@@ -171,4 +200,4 @@ Window Geometry:
     collapsed: false
   Width: 1280
   X: 0
-  Y: 18
+  Y: 56
