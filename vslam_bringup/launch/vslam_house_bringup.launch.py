@@ -38,9 +38,9 @@ def generate_launch_description():
             package='vslam',
             executable='vo_node',
             name='vo_node',
-            remappings=[('left_image', 'camera/infra1/image_rect_raw'),
-                        ('depth_image', 'camera/depth/image_rect_raw'),
-                        ('camera_info', 'camera/infra1/camera_info')],
+            remappings=[('left_image', '/realsense/infra1/image_rect_raw'),
+                        ('depth_image', '/realsense/depth/image_rect_raw'),
+                        ('camera_info', '/realsense/infra1/camera_info')],
             parameters=[vo_params],
             arguments=["--ros-args", "--log-level", log_level],
             emulate_tty=True

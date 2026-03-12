@@ -126,15 +126,16 @@ class VoNode(Node):
         # Reference: https://automaticaddison.com/getting-started-with-opencv-in-ros-2-foxy-fitzroy-python/
         self.br = CvBridge()
 
-        # Initiate ORB detector
-        self.orb = cv2.ORB_create(nfeatures=self.get_parameter("orb_max_features").value,
-                                  edgeThreshold=10,
-                                  fastThreshold=10,
-                                  WTA_K=2,
-                                  scoreType=cv2.ORB_HARRIS_SCORE)
-        # Create feature matcher.
-        # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
-        self.matcher = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=True)
+        # Parameters for good features to track
+        self.max_features = self.get_parameter("orb_max_features").value
+        self.quality_level = 0.01
+        self.min_distance = 10
+        self.block_size = 3
+        
+        # Create Lucas-Kanade tracker parameters
+        self.lk_params = dict(winSize=(15, 15),
+                              maxLevel=2,
+                              criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
 
         # Store previous frame's images, features, and feature positions.
         self._last_left_frame = None
@@ -187,88 +188,58 @@ class VoNode(Node):
         # depth_image = cv2.bilateralFilter(depth_image,9,25,25)
         # self._filtered_depth_pub.publish(self.br.cv2_to_imgmsg(depth_image)
 
-        # 2. Extract ORB features from the left image. Starting from
-        #    https://docs.opencv.org/4.x/d1/d89/tutorial_py_orb.html
-        #    This step will detect interesting keypoints that we will then
-        #    generate ORB descriptors from.
-        keypoints = self.orb.detect(left_image) 
-        # compute the descriptors with ORB
-        keypoints, descriptors = self.orb.compute(left_image, keypoints)
-
-        # TODO: FILTER KEYPOINTS USING ANMS. See
-        # https://github.com/BAILOOL/ANMS-Codes/blob/master/Python/ssc.py
-        # FIRST: SORT KEYPOINTS BY RESPONSE.
-        keypoints = sorted(keypoints, key=lambda x: x.response, reverse=True)
-        keypoints = ssc(keypoints, num_ret_points=100, tolerance=0.1, cols=left_image.shape[1], rows=left_image.shape[0])
-
-
-        # DEBUG: Draw keypoints on image and publish.
-        # draw only keypoints location,not size and orientation
-        # left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
-        # # Convert the debug image to a ROS image so we can publish it.
-        # left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
-        # self._keypoint_image_pub.publish(left_image_keypoints_msg)
-
-        # 3. Triangulate 3D position of each feature using stereo depth.
-        #    I forgot; before we can do this, have to convert from 2D pixel
-        #    coordinates to 2D image plane coordinates in millimeters. I think I
-        #    need the camera's intrinsics to do this. I.e., the image plane
-        #    offset and the pixel-size scale or something like that. I believe
-        #    the focal length terms may also contain scale information.
-        # NOTE: I make these lists here so I can "filter out" the keypoints (and
-        # their corresponding descriptors) that correspond with an invalid (0)
-        # depth!
-        keypoint_2d_positions = []  # DON'T KNOW IF WE NEED TO KEEP THIS
-        keypoint_descriptors = []
-        keypoint_3d_positions = []  # DON'T KNOW IF WE NEED TO KEEP THIS
-        # print(f"Type of keypoints: {type(keypoints)}, each: {type(keypoints[0])}")
-        # print(f"Type of descriptors: {type(descriptors)}, each: {type(descriptors[0])}")
-        for k, keypoint in enumerate(keypoints):
-
+        # 2. Extract good features to track from the left image.
+        # Convert to grayscale for feature detection
+        gray_image = cv2.cvtColor(left_image, cv2.COLOR_RGB2GRAY)
+        
+        # Detect good features to track
+        corners = cv2.goodFeaturesToTrack(gray_image, 
+                                        maxCorners=self.max_features,
+                                        qualityLevel=self.quality_level,
+                                        minDistance=self.min_distance,
+                                        blockSize=self.block_size)
+        
+        if corners is None:
+            self.get_logger().warn("No corners detected")
+            return
             
-            # First, need to know what each of these keypoints looks like.
-            # https://docs.opencv.org/4.x/d2/d29/classcv_1_1KeyPoint.html
+        # Convert corners to the same format as ORB keypoints
+        keypoints = [cv2.KeyPoint(x=float(c[0][0]), y=float(c[0][1]), size=1) for c in corners]
+        
+        # 3. Triangulate 3D position of each feature using stereo depth.
+        # NOTE: I make these lists here so I can "filter out" the keypoints that correspond with an invalid (0) depth!
+        keypoint_2d_positions = []
+        keypoint_3d_positions = []
+        
+        for k, keypoint in enumerate(keypoints):
             px = int(keypoint.pt[0])
             py = int(keypoint.pt[1])
 
             # Get depth from depth map at the keypoint position.
             Z = depth_image[py, px]
 
-            # if (Z < 100 or Z > 2000):
-            #     continue
-            # If the depth IS valid, then keep the keypoint by adding it to the
-            # new list of keypoints.
-            keypoint_2d_positions.append(keypoint)
-            keypoint_descriptors.append(descriptors[k])
+            # If the depth IS valid, then keep the keypoint
+            if Z > 0:  # Only keep valid depth measurements
+                keypoint_2d_positions.append(keypoint)
+                
+                # Grab necessary camera intrinsic values from the "K" matrix.
+                cx = self._left_camera_model.cx()
+                cy = self._left_camera_model.cy()
+                fx = self._left_camera_model.fx()
+                fy = self._left_camera_model.fy()
 
-            # TODO: Figure out a way to characterize the variance of the range
-            # measurement error at the given range, as we will eventually need
-            # this in the sensor model we use for the realsense!
+                # Compute the 3D position of each of the keypoints.
+                X = (px - cx)*Z / fx
+                Y = (py - cy)*Z / fy
 
-            # Grab necessary camera intrinsic values from the "K" matrix.
-            cx = self._left_camera_model.cx()
-            cy = self._left_camera_model.cy()
-            fx = self._left_camera_model.fx()
-            fy = self._left_camera_model.fy()
-
-            # Compute the 3D position of each of the keypoints.
-            X = (px - cx)*Z / fx
-            Y = (py - cy)*Z / fy
-
-            keypoint_3d_positions.append([X, Y, Z])
+                keypoint_3d_positions.append([X, Y, Z])
         
-        # Convert the position arrays into a numpy array.
-        # keypoint_2d_positions = np.array(keypoint_2d_positions)
+        # Convert to numpy arrays
         keypoints = tuple(keypoint_2d_positions)
-        descriptors = np.array(keypoint_descriptors)
         keypoint_3d_positions = np.array(keypoint_3d_positions)
-        # NOTE: Might have to "unconvert" these depending on what PnP.
-        # NOTE: Do we have to convert to a numpy array?
-        # TODO: FILTER OUT KEYPOINTS WHOSE DEPTH == 0!
-
-        # Print keypoints AFTER filtering.
+        
+        # Draw keypoints on image and publish.
         left_image_with_keypoints = cv2.drawKeypoints(left_image, keypoints, None, color=(0,255,0), flags=0)
-        # Convert the debug image to a ROS image so we can publish it.
         left_image_keypoints_msg = self.br.cv2_to_imgmsg(cvim=left_image_with_keypoints, encoding="rgb8")
         self._keypoint_image_pub.publish(left_image_keypoints_msg)
 
@@ -288,91 +259,10 @@ class VoNode(Node):
             self._last_left_frame = left_image
             self._last_left_frame_with_keypoints = left_image_with_keypoints
             self._last_keypoints = keypoints
-            self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
 
-            # TODO: Publish initial transformation here. 
-
-            # ACTUALLY: Maybe this node should instead publish the transform
-            # from C0-->CN, where CN is just the current timestep camera frame.
-
-            # THEN, we would just define a static transform between the
-            # odom frame and C0.
-
-
-
-            # from odom to optical: 90 degree roll, -90 pitch?
-
-            
-            # While I don't want to get too caught up on this, what would this
-            # really be publishing in practice?
-
-            # In practice, an odometry source would be publishing "an odometry
-            # estimate message" == what it thinks the pose + twist of the robot
-            # is at each timestep. Then, you might combine the odometry
-            # estimates of multiple odometry sources into a single optimization
-            # problem to come up with a fused motion estimate (that reconciles
-            # the error between them all).
-
-            # In this way, we would not be publishing the transform between each
-            # camera frame, or even the camera frame at each step. Instead, more
-            # likely, I think we would be computing the transformation between
-            # each base link frame--I.e., the frame this is rigidly attached to.
-            # Then, we can publish the odometry of the base link rather than
-            # just the camera frame.
-
-            # The only wrinkle/caveat with this is dealing with the twist part
-            # (==the linear and angular velocity estimate). The
-            # position+orientation is trivial--as we just use the static
-            # transform between the base link and the camera frame. This is
-            # fine. What's NOT trivial is how to resolve/interpret the camera
-            # frame's linear and angular velocity and compute from that the
-            # velocity of the base link frame. This might literally just be the
-            # kinematic transport theorem, but I need to read up on this.
-
-
-            # In any case, a parameter of this node would be which frame we
-            # would want to publish the odometry of. Then, this node would look
-            # up a static transform between the base_link and the sensor frame
-            # (camera_link in this case). We would compute the relative
-            # transform between the two camera frames as usual. Then, compute
-            # the camera_link pose w.r.t. the odom frame, and then use the
-            # static transform between base link and camera link to compute
-            # where the base link must be?
-
-            # Maybe for now, 
-
-
-            # We get the base_link pose in the odom frame == which is also just
-            # the SE(3) transformation from the base_link frame to the odom
-            # frame (because the translation vector is always in the destination
-            # frame). Can take this and compute what the current camera_link to
-            # odom frame transformation is by composing that base_link->odom
-            # transformation with the camera_link-->base_link transformation.
-            # This gives us camera_link to odom. We the compute the relative
-            # transform from camera_link at time k-1 to camera_link at time k
-            # (what pnp gives us). We can then find the transform from
-            # camera_link to odom by composing the camera_link at time k to odom
-            # with camera_link k-1 to k to get camera_link k to odom == new
-            # camera pose in odom frame. Can then extract the new base link to
-            # odom transform by composing camera_link_k to odom with base link
-            # to camera_link_k (a static tf). This gives us the transform from
-            # base_link to odom, which is == the base link's pose in the odom
-            # frame. NEED TO VERIFY THE DETAILS. This logic should all be
-            # isolated from the core VO functionalityi, though.
-
-
-
-
-
             # At first timestep, transformation to first this camera's frame is just identity.
-            # self._last_tf = np.eye(4,4)
-            # self.publish_camera_transform(child_frame=left_image_msg.header.frame_id,
-            #                           parent_frame="odom",
-            #                           transform=self._last_tf)
-            # self.R = np.eye(3,3)
             self.t = np.zeros((3,1), dtype=float)
-
             # For now, just hardcode the initial orientation between the
             # camera_link at timestep 0 and the odom frame.
             self.R = euler.euler2mat(np.deg2rad(90), np.deg2rad(-90), 0)
@@ -384,25 +274,36 @@ class VoNode(Node):
 
             return
         
-        # OTHERWISE, do feature matching between the last image's features and
-        # this images features.
-        # https://docs.opencv.org/4.x/dc/dc3/tutorial_py_matcher.html
-        # NOTE: The first parameter == the QUERY descriptors, which are compared
-        # against the TRAIN descriptors == second argument.
-        matches = self.matcher.match(descriptors, self._last_descriptors)
-        # Sort them in the order of their distance.
-        matches = sorted(matches, key = lambda x:x.distance)
+        # OTHERWISE, use Lucas-Kanade tracking to track features between frames
+        # Convert current and last frames to grayscale for tracking
+        current_gray = cv2.cvtColor(left_image, cv2.COLOR_RGB2GRAY)
+        last_gray = cv2.cvtColor(self._last_left_frame, cv2.COLOR_RGB2GRAY)
+        
+        # Convert keypoints to numpy array for LK tracking
+        current_points = np.array([kp.pt for kp in keypoints], dtype=np.float32)
+        last_points = np.array([kp.pt for kp in self._last_keypoints], dtype=np.float32)
+        
+        # Use Lucas-Kanade optical flow to track points
+        tracked_points, status, error = cv2.calcOpticalFlowPyrLK(
+            last_gray, current_gray, last_points, None, **self.lk_params)
+        
+        # Filter out points that weren't successfully tracked
+        good_new = tracked_points[status.ravel() == 1]
+        good_old = last_points[status.ravel() == 1]
+        good_3d_positions = self._last_positions[status.ravel() == 1]
+        
+        # Draw tracked points
+        tracked_image = left_image.copy()
+        for i, (new, old) in enumerate(zip(good_new, good_old)):
+            a, b = new.ravel()
+            c, d = old.ravel()
+            tracked_image = cv2.line(tracked_image, (int(a), int(b)), (int(c), int(d)), (0, 255, 0), 2)
+            tracked_image = cv2.circle(tracked_image, (int(a), int(b)), 5, (0, 0, 255), -1)
+        
+        tracked_image_msg = self.br.cv2_to_imgmsg(cvim=tracked_image, encoding="rgb8")
+        self._matched_points_image_pub.publish(tracked_image_msg)
 
-        # Draw first 10 matches.
-        matches_image = cv2.drawMatches(left_image_with_keypoints,
-                                        keypoints,
-                                        self._last_left_frame_with_keypoints,
-                                        self._last_keypoints,
-                                        matches[10:],None,flags=cv2.DrawMatchesFlags_NOT_DRAW_SINGLE_POINTS)
-        matches_image_msg = self.br.cv2_to_imgmsg(cvim=matches_image, encoding="rgb8")
-        self._matched_points_image_pub.publish(matches_image_msg)
-
-        # For the matches we find, our goal is to use 3D-2D correspondences and
+        # For the tracked points, our goal is to use 3D-2D correspondences and
         # use PNP to recover what the camera's R|t must have been based on where
         # the 3D points are in the previous timestep camera's frame and where we
         # are observing their projections in our current timestep camera image
@@ -422,31 +323,14 @@ class VoNode(Node):
         # documents SolvePnP RANSAC, which is what we'll use, and what Stephen
         # Ferro used in his approach.
 
-        # https://docs.opencv.org/4.x/d4/de0/classcv_1_1DMatch.html#details
-        # Each DMatch instance in the list of matches contains the index of the
-        # query descriptor and the train descriptor. Also note that we sort the
-        # matches by their distance (lowest best).
-
         # So, how can we use these?
         # For PnP, we want a list of 2D points and a parallel list of the 3D
         # positions of those identified points, but resolved in the previous
         # timestep camera frame.
-        current_frame_feature_2d_points = []
-        prev_frame_feature_3d_positions = []
-        # Loop through these for now, come up with a faster way later.
-        for m, match in enumerate(matches):
-            current_frame_feature_idx = match.queryIdx
-            prev_frame_feature_idx = match.trainIdx
-            current_frame_feature_2d_points.append(keypoints[current_frame_feature_idx].pt)
-            prev_frame_feature_3d_positions.append(self._last_positions[prev_frame_feature_idx]) # May have to make a numpy array out of this.
-        # TEMP: Remove
-        # if len(prev_frame_feature_3d_positions) < 8:
-        #     return
-        # Convert the resulting lists to numpy arrays.
-        current_frame_feature_2d_points = np.array(current_frame_feature_2d_points)
-        prev_frame_feature_3d_positions = np.array(prev_frame_feature_3d_positions)
+        current_frame_feature_2d_points = good_new
+        prev_frame_feature_3d_positions = good_3d_positions
 
-        self.get_logger().debug(f"Number of matches: {len(matches)}")
+        self.get_logger().debug(f"Number of tracked points: {len(current_frame_feature_2d_points)}")
 
         # Publish keypoints with their depth values.
         left_image_with_depth_keypoints = draw_keypoints_with_text(left_image, current_frame_feature_2d_points, prev_frame_feature_3d_positions, color=(0, 255, 0))
@@ -490,7 +374,6 @@ class VoNode(Node):
             self._last_left_frame = left_image
             self._last_left_frame_with_keypoints = left_image_with_keypoints
             self._last_keypoints = keypoints
-            self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
             return
         
@@ -707,7 +590,6 @@ class VoNode(Node):
             self._last_left_frame = left_image
             self._last_left_frame_with_keypoints = left_image_with_keypoints
             self._last_keypoints = keypoints
-            self._last_descriptors = descriptors
             self._last_positions = keypoint_3d_positions
 
     # https://answers.ros.org/question/393979/projecting-3d-points-into-pixel-using-image_geometrypinholecameramodel/
