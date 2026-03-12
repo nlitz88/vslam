@@ -59,7 +59,12 @@ class VoNode(Node):
         self._last_gray = None
         self._last_keypoints_2d = None # np.array of shape (N, 2)
         self._last_keypoints_3d = None # np.array of shape (N, 3)
-        self.R = np.eye(3)
+        # self.R = np.eye(3)
+        # self.R = odom_from_camera == starts level.
+        # t_odom = odom_from_camera * t_camera
+        self.R = np.array([[0, 0, 1],
+                           [-1, 0, 0],
+                           [0, -1, 0]])
         self.t = np.zeros((3, 1))
 
         # LK Params
